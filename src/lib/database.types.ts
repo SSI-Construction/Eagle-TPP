@@ -124,6 +124,51 @@ export interface Database {
           Database["public"]["Tables"]["trade_external_commitments"]["Row"]
         >;
       };
+      trade_capacity_overrides: {
+        Row: {
+          id: string;
+          trade_id: string;
+          start_date: string;
+          end_date: string;
+          total_crews: number;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["trade_capacity_overrides"]["Row"]
+        > & { trade_id: string; start_date: string; end_date: string; total_crews: number };
+        Update: Partial<
+          Database["public"]["Tables"]["trade_capacity_overrides"]["Row"]
+        >;
+      };
+      trade_crew_members: {
+        Row: {
+          id: string;
+          trade_id: string;
+          name: string;
+          role: string;
+          is_active: boolean;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["trade_crew_members"]["Row"]> & {
+          trade_id: string;
+          name: string;
+          role: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["trade_crew_members"]["Row"]>;
+      };
+      booking_crew_members: {
+        Row: {
+          booking_id: string;
+          crew_member_id: string;
+          assigned_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["booking_crew_members"]["Row"]> & {
+          booking_id: string;
+          crew_member_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["booking_crew_members"]["Row"]>;
+      };
     };
   };
 }

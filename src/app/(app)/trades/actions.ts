@@ -7,10 +7,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo/config";
 import {
+  demoAddCapacityOverride,
   demoAddCrew,
   demoAddExternalCommitment,
   demoCreateTrade,
   demoRemoveExternalCommitment,
+  demoRemoveCapacityOverride,
   demoToggleCrewActive,
 } from "@/lib/demo/store";
 
@@ -203,6 +205,100 @@ export async function removeExternalCommitment(
     .from("trade_external_commitments")
     .delete()
     .eq("id", commitmentId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/trades/${tradeId}`);
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+const capacityOverrideSchema = z
+  .object({
+    tradeId: z.string().min(1),
+    startDate: z.string().min(1),
+    endDate: z.string().min(1),
+    totalCrews: z.coerce.number().int().min(1).max(50),
+    note: z.string().max(500).optional(),
+  })
+  .refine((value) => value.endDate >= value.startDate, {
+    message: "End date must be on or after the start date",
+    path: ["endDate"],
+  });
+
+export async function addCapacityOverride(
+  input: z.infer<typeof capacityOverrideSchema>,
+): Promise<ActionResult> {
+  const parsed = capacityOverrideSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid capacity period" };
+  }
+
+  const profile = await getCurrentProfile();
+  const canManage =
+    profile?.role === "admin" ||
+    (profile?.role === "trade" && profile.trade_id === parsed.data.tradeId);
+  if (!canManage) {
+    return { ok: false, error: "Only an admin or the owning trade can update capacity." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoAddCapacityOverride(parsed.data);
+    if (result.ok) {
+      revalidatePath(`/trades/${parsed.data.tradeId}`);
+      revalidatePath("/schedule");
+    }
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("trade_capacity_overrides").insert({
+    trade_id: parsed.data.tradeId,
+    start_date: parsed.data.startDate,
+    end_date: parsed.data.endDate,
+    total_crews: parsed.data.totalCrews,
+    note: parsed.data.note || null,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "23P01"
+          ? "This date range overlaps an existing capacity override."
+          : error.message,
+    };
+  }
+
+  revalidatePath(`/trades/${parsed.data.tradeId}`);
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+export async function removeCapacityOverride(
+  overrideId: string,
+  tradeId: string,
+): Promise<ActionResult> {
+  const profile = await getCurrentProfile();
+  const canManage =
+    profile?.role === "admin" || (profile?.role === "trade" && profile.trade_id === tradeId);
+  if (!canManage) {
+    return { ok: false, error: "Only an admin or the owning trade can update capacity." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoRemoveCapacityOverride(overrideId);
+    if (result.ok) {
+      revalidatePath(`/trades/${tradeId}`);
+      revalidatePath("/schedule");
+    }
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("trade_capacity_overrides")
+    .delete()
+    .eq("id", overrideId)
+    .eq("trade_id", tradeId);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/trades/${tradeId}`);

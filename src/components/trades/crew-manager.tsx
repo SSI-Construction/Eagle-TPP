@@ -8,22 +8,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  addCapacityOverride,
   addCrew,
   addExternalCommitment,
   removeExternalCommitment,
+  removeCapacityOverride,
   toggleCrewActive,
 } from "@/app/(app)/trades/actions";
-import type { Crew, ExternalCommitment } from "@/lib/data";
+import type { CapacityOverride, Crew, ExternalCommitment } from "@/lib/data";
 import { Trash2 } from "lucide-react";
 
 interface CrewManagerProps {
   tradeId: string;
   crews: Crew[];
   externalCommitments: ExternalCommitment[];
+  capacityOverrides: CapacityOverride[];
   canManage: boolean;
 }
 
-export function CrewManager({ tradeId, crews, externalCommitments, canManage }: CrewManagerProps) {
+export function CrewManager({
+  tradeId,
+  crews,
+  externalCommitments,
+  capacityOverrides,
+  canManage,
+}: CrewManagerProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [crewName, setCrewName] = useState("");
@@ -32,6 +41,13 @@ export function CrewManager({ tradeId, crews, externalCommitments, canManage }: 
   const [ecEnd, setEcEnd] = useState("");
   const [ecCount, setEcCount] = useState(1);
   const [ecNote, setEcNote] = useState("");
+
+  const [capacityStart, setCapacityStart] = useState("");
+  const [capacityEnd, setCapacityEnd] = useState("");
+  const [capacityTotal, setCapacityTotal] = useState(
+    crews.filter((crew) => crew.is_active).length,
+  );
+  const [capacityNote, setCapacityNote] = useState("");
 
   function handleAddCrew(e: React.FormEvent) {
     e.preventDefault();
@@ -81,6 +97,39 @@ export function CrewManager({ tradeId, crews, externalCommitments, canManage }: 
     startTransition(async () => {
       const result = await removeExternalCommitment(id, tradeId);
       if (!result.ok) toast.error(result.error);
+      router.refresh();
+    });
+  }
+
+  function handleAddCapacity(e: React.FormEvent) {
+    e.preventDefault();
+    startTransition(async () => {
+      const result = await addCapacityOverride({
+        tradeId,
+        startDate: capacityStart,
+        endDate: capacityEnd,
+        totalCrews: capacityTotal,
+        note: capacityNote,
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      setCapacityStart("");
+      setCapacityEnd("");
+      setCapacityNote("");
+      toast.success("Temporary capacity added");
+      router.refresh();
+    });
+  }
+
+  function handleRemoveCapacity(id: string) {
+    startTransition(async () => {
+      const result = await removeCapacityOverride(id, tradeId);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       router.refresh();
     });
   }
@@ -220,6 +269,112 @@ export function CrewManager({ tradeId, crews, externalCommitments, canManage }: 
               </div>
               <Button type="submit" disabled={pending || !ecStart || !ecEnd} className="w-full">
                 Add commitment
+              </Button>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="md:col-span-2">
+        <CardHeader>
+          <CardTitle className="text-base">Temporary capacity</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Set the total crew capacity for a date range. Outside that range, capacity returns to
+            the {" "}
+            {crews.filter((crew) => crew.is_active).length}-crew baseline.
+          </p>
+          {capacityOverrides.map((override) => (
+            <div
+              key={override.id}
+              className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+            >
+              <div>
+                <div className="font-medium">
+                  {override.start_date} → {override.end_date}
+                </div>
+                <div className="text-muted-foreground">
+                  {override.total_crews} crew{override.total_crews === 1 ? "" : "s"} total
+                  {override.note ? ` · ${override.note}` : ""}
+                </div>
+              </div>
+              {canManage && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => handleRemoveCapacity(override.id)}
+                  aria-label="Remove temporary capacity"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+          {capacityOverrides.length === 0 && (
+            <p className="text-sm text-muted-foreground">No temporary capacity periods.</p>
+          )}
+
+          {canManage && (
+            <form onSubmit={handleAddCapacity} className="space-y-2 border-t pt-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_1fr_100px]">
+                <div className="space-y-1">
+                  <Label htmlFor="capacityStart" className="text-xs">
+                    Start
+                  </Label>
+                  <Input
+                    id="capacityStart"
+                    type="date"
+                    required
+                    value={capacityStart}
+                    onChange={(e) => setCapacityStart(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="capacityEnd" className="text-xs">
+                    End
+                  </Label>
+                  <Input
+                    id="capacityEnd"
+                    type="date"
+                    required
+                    value={capacityEnd}
+                    onChange={(e) => setCapacityEnd(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="capacityTotal" className="text-xs">
+                    Total crews
+                  </Label>
+                  <Input
+                    id="capacityTotal"
+                    type="number"
+                    min={1}
+                    max={50}
+                    required
+                    value={capacityTotal}
+                    onChange={(e) => setCapacityTotal(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="capacityNote" className="text-xs">
+                  Note
+                </Label>
+                <Input
+                  id="capacityNote"
+                  placeholder="Seasonal crew, extra subcontractor, etc."
+                  value={capacityNote}
+                  onChange={(e) => setCapacityNote(e.target.value)}
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={pending || !capacityStart || !capacityEnd || capacityTotal < 1}
+                className="w-full"
+              >
+                Add temporary capacity
               </Button>
             </form>
           )}

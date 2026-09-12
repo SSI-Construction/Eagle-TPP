@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import {
+  getCapacityOverridesForTrade,
   getCurrentProfile,
   getExternalCommitmentsForTrade,
   getTradeWithDetailsById,
@@ -13,10 +14,11 @@ export default async function TradeDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [profile, trade, externalCommitments] = await Promise.all([
+  const [profile, trade, externalCommitments, capacityOverrides] = await Promise.all([
     getCurrentProfile(),
     getTradeWithDetailsById(id),
     getExternalCommitmentsForTrade(id),
+    getCapacityOverridesForTrade(id),
   ]);
 
   if (!trade) notFound();
@@ -50,6 +52,7 @@ export default async function TradeDetailPage({
         tradeId={trade.id}
         crews={trade.crews}
         externalCommitments={externalCommitments}
+        capacityOverrides={capacityOverrides}
         canManage={canManage}
       />
     </div>

@@ -6,10 +6,14 @@ import {
   demoGetAllProfiles,
   demoGetBookingsForTrade,
   demoGetBookingsInRange,
+  demoGetBookingCrewMemberAssignments,
+  demoGetCapacityOverridesForTrade,
+  demoGetCapacityOverridesInRange,
   demoGetExternalCommitmentsForTrade,
   demoGetExternalCommitmentsInRange,
   demoGetProjects,
   demoGetTradeCategories,
+  demoGetTradeCrewMembers,
   demoGetTradesWithDetails,
   demoGetTradeWithDetailsById,
   getProfileForRole,
@@ -23,6 +27,11 @@ export type Project = Database["public"]["Tables"]["projects"]["Row"];
 export type Booking = Database["public"]["Tables"]["bookings"]["Row"];
 export type ExternalCommitment =
   Database["public"]["Tables"]["trade_external_commitments"]["Row"];
+export type CapacityOverride =
+  Database["public"]["Tables"]["trade_capacity_overrides"]["Row"];
+export type TradeCrewMember = Database["public"]["Tables"]["trade_crew_members"]["Row"];
+export type BookingCrewMember =
+  Database["public"]["Tables"]["booking_crew_members"]["Row"];
 
 /** Returns the signed-in user's profile, or null if not signed in / no profile row yet. */
 export async function getCurrentProfile(): Promise<Profile | null> {
@@ -127,6 +136,22 @@ export async function getExternalCommitmentsInRange(
   return data ?? [];
 }
 
+export async function getCapacityOverridesInRange(
+  startDate: string,
+  endDate: string,
+): Promise<CapacityOverride[]> {
+  if (isDemoMode()) return demoGetCapacityOverridesInRange(startDate, endDate);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("trade_capacity_overrides")
+    .select("*")
+    .lte("start_date", endDate)
+    .gte("end_date", startDate);
+  if (error) throw error;
+  return data ?? [];
+}
+
 /** All non-cancelled bookings for a trade (past and future), soonest first. */
 export async function getBookingsForTrade(tradeId: string): Promise<Booking[]> {
   if (isDemoMode()) return demoGetBookingsForTrade(tradeId);
@@ -140,6 +165,37 @@ export async function getBookingsForTrade(tradeId: string): Promise<Booking[]> {
     .order("start_date");
   if (error) throw error;
   return data ?? [];
+}
+
+export async function getTradeCrewMembers(tradeId: string): Promise<TradeCrewMember[]> {
+  if (isDemoMode()) return demoGetTradeCrewMembers(tradeId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("trade_crew_members")
+    .select("*")
+    .eq("trade_id", tradeId)
+    .order("name");
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getBookingCrewMemberAssignments(
+  tradeId: string,
+): Promise<BookingCrewMember[]> {
+  if (isDemoMode()) return demoGetBookingCrewMemberAssignments(tradeId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("booking_crew_members")
+    .select("booking_id, crew_member_id, assigned_at, trade_crew_members!inner(trade_id)")
+    .eq("trade_crew_members.trade_id", tradeId);
+  if (error) throw error;
+  return (data ?? []).map((assignment) => ({
+    booking_id: assignment.booking_id,
+    crew_member_id: assignment.crew_member_id,
+    assigned_at: assignment.assigned_at,
+  }));
 }
 
 
@@ -169,6 +225,21 @@ export async function getExternalCommitmentsForTrade(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("trade_external_commitments")
+    .select("*")
+    .eq("trade_id", tradeId)
+    .order("start_date");
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getCapacityOverridesForTrade(
+  tradeId: string,
+): Promise<CapacityOverride[]> {
+  if (isDemoMode()) return demoGetCapacityOverridesForTrade(tradeId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("trade_capacity_overrides")
     .select("*")
     .eq("trade_id", tradeId)
     .order("start_date");

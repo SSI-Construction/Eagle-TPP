@@ -2,17 +2,21 @@ import Link from "next/link";
 import {
   getBookingsForTrade,
   getBookingsInRange,
+  getBookingCrewMemberAssignments,
+  getCapacityOverridesInRange,
   getAllProfiles,
   getCurrentProfile,
   getExternalCommitmentsInRange,
   getProjects,
   getTradeCategories,
+  getTradeCrewMembers,
   getTradesWithDetails,
 } from "@/lib/data";
 import { buildTradeCapacity, dateRange, toDateKey } from "@/lib/capacity";
 import { CapacityBoard, type BoardRow, type BookingDetail } from "@/components/schedule/capacity-board";
 import { MyBookingsPanel } from "@/components/schedule/my-bookings-panel";
 import { AdminBookingsPanel } from "@/components/schedule/admin-bookings-panel";
+import { TradeCrewRoster } from "@/components/schedule/trade-crew-roster";
 
 const WINDOW_DAYS = 14;
 
@@ -30,12 +34,21 @@ export default async function SchedulePage({
   const profile = await getCurrentProfile();
   const isTrade = profile?.role === "trade";
 
-  const [categories, allTrades, projects, bookings, externalCommitments, profiles] = await Promise.all([
+  const [
+    categories,
+    allTrades,
+    projects,
+    bookings,
+    externalCommitments,
+    capacityOverrides,
+    profiles,
+  ] = await Promise.all([
     getTradeCategories(),
     getTradesWithDetails(),
     getProjects(),
     getBookingsInRange(rangeStart, rangeEnd),
     getExternalCommitmentsInRange(rangeStart, rangeEnd),
+    getCapacityOverridesInRange(rangeStart, rangeEnd),
     getAllProfiles(),
   ]);
 
@@ -52,11 +65,17 @@ export default async function SchedulePage({
       const totalCrews = trade.crews.filter((c) => c.is_active).length;
       const tradeBookings = bookings.filter((b) => b.trade_id === trade.id);
       const tradeExternal = externalCommitments.filter((e) => e.trade_id === trade.id);
+      const tradeOverrides = capacityOverrides.filter((override) => override.trade_id === trade.id);
 
       const capacityDays = buildTradeCapacity(
         {
           tradeId: trade.id,
           totalCrews,
+          overrides: tradeOverrides.map((override) => ({
+            startDate: override.start_date,
+            endDate: override.end_date,
+            totalCrews: override.total_crews,
+          })),
           bookings: tradeBookings.map((b) => ({
             startDate: b.start_date,
             endDate: b.end_date,
@@ -123,9 +142,16 @@ export default async function SchedulePage({
       };
     });
 
-  const myBookings =
+  const tradeDashboardData =
     isTrade && profile?.trade_id
-      ? (await getBookingsForTrade(profile.trade_id)).map((b) => ({
+      ? await Promise.all([
+          getBookingsForTrade(profile.trade_id),
+          getTradeCrewMembers(profile.trade_id),
+          getBookingCrewMemberAssignments(profile.trade_id),
+        ])
+      : null;
+  const myBookings = tradeDashboardData
+      ? tradeDashboardData[0].map((b) => ({
           ...b,
           projectName: projectNameById.get(b.project_id) ?? "Unknown project",
           projectNumber: projects.find((project) => project.id === b.project_id)?.project_number ?? null,
@@ -134,6 +160,8 @@ export default async function SchedulePage({
           bookedByName: b.created_by ? profileNameById.get(b.created_by) ?? "Unknown" : "Unknown",
         }))
       : null;
+  const crewMembers = tradeDashboardData?.[1] ?? [];
+  const crewAssignments = tradeDashboardData?.[2] ?? [];
 
   const tradeNameById = new Map(trades.map((trade) => [trade.id, trade.company_name]));
   const adminBookings =
@@ -195,8 +223,13 @@ export default async function SchedulePage({
             />
           </div>
           {myBookings && (
-            <div className="w-full shrink-0 lg:w-96 lg:overflow-y-auto">
-              <MyBookingsPanel bookings={myBookings} />
+            <div className="w-full shrink-0 space-y-6 lg:w-96 lg:overflow-y-auto">
+              <TradeCrewRoster members={crewMembers} />
+              <MyBookingsPanel
+                bookings={myBookings}
+                crewMembers={crewMembers}
+                crewAssignments={crewAssignments}
+              />
             </div>
           )}
           {adminBookings && (

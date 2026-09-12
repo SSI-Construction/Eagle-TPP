@@ -28,21 +28,6 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
 
-  async function signInWithMicrosoft() {
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "azure",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: "email",
-      },
-    });
-    if (error) {
-      toast.error(error.message);
-      setLoading(false);
-    }
-  }
-
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -93,11 +78,35 @@ function LoginForm() {
 
             <TabsContent value="staff" className="space-y-4 pt-4">
               <p className="text-sm text-muted-foreground">
-                PMs and site supervisors sign in with their company Microsoft account.
+                PMs and site supervisors sign in with their staff account.
               </p>
-              <Button className="w-full" onClick={signInWithMicrosoft} disabled={loading}>
-                Sign in with Microsoft
-              </Button>
+              <form className="space-y-3" onSubmit={signInWithPassword}>
+                <div className="space-y-1.5">
+                  <Label htmlFor="staff-email">Email</Label>
+                  <Input
+                    id="staff-email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="staff-password">Password</Label>
+                  <Input
+                    id="staff-password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={loading}>
+                  Sign in
+                </Button>
+              </form>
             </TabsContent>
 
             <TabsContent value="trade" className="space-y-4 pt-4">

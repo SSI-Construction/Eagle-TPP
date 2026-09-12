@@ -4,12 +4,15 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/data";
-import { dateRange, diffDays, shiftDateKey } from "@/lib/capacity";
+import { dateRange, diffDays, shiftDateKey, totalCrewsForDate } from "@/lib/capacity";
 import { isDemoMode } from "@/lib/demo/config";
 import {
   demoCancelBooking,
   demoConfirmBooking,
   demoCreateBooking,
+  demoAddTradeCrewMember,
+  demoSetBookingCrewMembers,
+  demoToggleTradeCrewMember,
   demoUpdateBooking,
   demoUpdateBookingEndDate,
 } from "@/lib/demo/store";
@@ -64,7 +67,12 @@ export async function createBooking(
 
   const supabase = await createClient();
 
-  const [{ data: crews }, { data: existingBookings }, { data: externalCommitments }] =
+  const [
+    { data: crews },
+    { data: existingBookings },
+    { data: externalCommitments },
+    { data: capacityOverrides },
+  ] =
     await Promise.all([
       supabase.from("crews").select("id").eq("trade_id", tradeId).eq("is_active", true),
       supabase
@@ -80,9 +88,20 @@ export async function createBooking(
         .eq("trade_id", tradeId)
         .lte("start_date", endDate)
         .gte("end_date", startDate),
+      supabase
+        .from("trade_capacity_overrides")
+        .select("start_date, end_date, total_crews")
+        .eq("trade_id", tradeId)
+        .lte("start_date", endDate)
+        .gte("end_date", startDate),
     ]);
 
   const totalCrews = crews?.length ?? 0;
+  const datedTotals = (capacityOverrides ?? []).map((override) => ({
+    startDate: override.start_date,
+    endDate: override.end_date,
+    totalCrews: override.total_crews,
+  }));
   const start = new Date(`${startDate}T00:00:00`);
   const days = dateRange(start, dayCount(startDate, endDate));
 
@@ -96,7 +115,7 @@ export async function createBooking(
         .filter((e) => day >= e.start_date && day <= e.end_date)
         .reduce((sum, e) => sum + e.crew_count, 0);
 
-    if (booked + crewCount > totalCrews) {
+    if (booked + crewCount > totalCrewsForDate(totalCrews, day, datedTotals)) {
       conflictDates.push(day);
     }
   }
@@ -197,6 +216,155 @@ export async function confirmBooking(bookingId: string): Promise<CreateBookingRe
   return { ok: true };
 }
 
+const crewMemberSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  role: z.string().trim().min(1).max(120),
+});
+
+export async function addTradeCrewMember(
+  input: z.infer<typeof crewMemberSchema>,
+): Promise<CreateBookingResult> {
+  const parsed = crewMemberSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid crew member" };
+  }
+
+  const profile = await getCurrentProfile();
+  if (profile?.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only trade partners can manage their crew roster." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoAddTradeCrewMember({ tradeId: profile.trade_id, ...parsed.data });
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("trade_crew_members").insert({
+    trade_id: profile.trade_id,
+    name: parsed.data.name,
+    role: parsed.data.role,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+export async function toggleTradeCrewMember(
+  memberId: string,
+  isActive: boolean,
+): Promise<CreateBookingResult> {
+  const profile = await getCurrentProfile();
+  if (profile?.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only trade partners can manage their crew roster." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoToggleTradeCrewMember(memberId, isActive, profile.trade_id);
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("trade_crew_members")
+    .update({ is_active: isActive })
+    .eq("id", memberId)
+    .eq("trade_id", profile.trade_id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+const crewAssignmentSchema = z.object({
+  bookingId: z.string().min(1),
+  memberIds: z.array(z.string().min(1)).max(100).transform((ids) => [...new Set(ids)]),
+});
+
+export async function setBookingCrewMembers(input: {
+  bookingId: string;
+  memberIds: string[];
+}): Promise<CreateBookingResult> {
+  const parsed = crewAssignmentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid crew assignment" };
+  }
+
+  const profile = await getCurrentProfile();
+  if (profile?.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only trade partners can assign crew members." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoSetBookingCrewMembers(
+      parsed.data.bookingId,
+      parsed.data.memberIds,
+      profile.trade_id,
+    );
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const [{ data: booking, error: bookingError }, { data: members, error: membersError }] =
+    await Promise.all([
+      supabase
+        .from("bookings")
+        .select("id")
+        .eq("id", parsed.data.bookingId)
+        .eq("trade_id", profile.trade_id)
+        .maybeSingle(),
+      parsed.data.memberIds.length > 0
+        ? supabase
+            .from("trade_crew_members")
+            .select("id")
+            .eq("trade_id", profile.trade_id)
+            .in("id", parsed.data.memberIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+  if (bookingError || !booking) return { ok: false, error: "Booking not found." };
+  if (membersError || members?.length !== parsed.data.memberIds.length) {
+    return { ok: false, error: "One or more crew members could not be found." };
+  }
+
+  const { data: currentAssignments, error: assignmentsError } = await supabase
+    .from("booking_crew_members")
+    .select("crew_member_id")
+    .eq("booking_id", parsed.data.bookingId);
+  if (assignmentsError) return { ok: false, error: assignmentsError.message };
+
+  const currentIds = new Set((currentAssignments ?? []).map((item) => item.crew_member_id));
+  const requestedIds = new Set(parsed.data.memberIds);
+  const removedIds = [...currentIds].filter((id) => !requestedIds.has(id));
+  const addedIds = [...requestedIds].filter((id) => !currentIds.has(id));
+
+  if (removedIds.length > 0) {
+    const { error } = await supabase
+      .from("booking_crew_members")
+      .delete()
+      .eq("booking_id", parsed.data.bookingId)
+      .in("crew_member_id", removedIds);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (addedIds.length > 0) {
+    const { error } = await supabase.from("booking_crew_members").insert(
+      addedIds.map((crewMemberId) => ({
+        booking_id: parsed.data.bookingId,
+        crew_member_id: crewMemberId,
+      })),
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
 const updateBookingSchema = bookingSchema.extend({
   bookingId: z.string().min(1),
   status: z.enum(["tentative", "confirmed", "cancelled"]),
@@ -226,7 +394,12 @@ export async function updateBooking(
   const supabase = await createClient();
 
   if (status !== "cancelled") {
-    const [{ data: crews }, { data: otherBookings }, { data: externalCommitments }] =
+    const [
+      { data: crews },
+      { data: otherBookings },
+      { data: externalCommitments },
+      { data: capacityOverrides },
+    ] =
       await Promise.all([
         supabase.from("crews").select("id").eq("trade_id", tradeId).eq("is_active", true),
         supabase
@@ -243,9 +416,20 @@ export async function updateBooking(
           .eq("trade_id", tradeId)
           .lte("start_date", endDate)
           .gte("end_date", startDate),
+        supabase
+          .from("trade_capacity_overrides")
+          .select("start_date, end_date, total_crews")
+          .eq("trade_id", tradeId)
+          .lte("start_date", endDate)
+          .gte("end_date", startDate),
       ]);
 
     const totalCrews = crews?.length ?? 0;
+    const datedTotals = (capacityOverrides ?? []).map((override) => ({
+      startDate: override.start_date,
+      endDate: override.end_date,
+      totalCrews: override.total_crews,
+    }));
     const days = dateRange(
       new Date(`${startDate}T00:00:00`),
       dayCount(startDate, endDate),
@@ -258,7 +442,7 @@ export async function updateBooking(
         (externalCommitments ?? [])
           .filter((item) => day >= item.start_date && day <= item.end_date)
           .reduce((sum, item) => sum + item.crew_count, 0);
-      return used + crewCount > totalCrews;
+      return used + crewCount > totalCrewsForDate(totalCrews, day, datedTotals);
     });
     if (hasConflict) {
       return { ok: false, error: "The updated booking exceeds available capacity." };
@@ -406,7 +590,12 @@ export async function updateBookingEndDate(input: {
 
   // Extending: check the newly-added days against crews, other bookings, and
   // external commitments for this trade.
-  const [{ data: crews }, { data: otherBookings }, { data: externalCommitments }] =
+  const [
+    { data: crews },
+    { data: otherBookings },
+    { data: externalCommitments },
+    { data: capacityOverrides },
+  ] =
     await Promise.all([
       supabase.from("crews").select("id").eq("trade_id", booking.trade_id).eq("is_active", true),
       supabase
@@ -422,9 +611,20 @@ export async function updateBookingEndDate(input: {
         .eq("trade_id", booking.trade_id)
         .lte("start_date", newEndDate)
         .gte("end_date", shiftDateKey(booking.end_date, 1)),
+      supabase
+        .from("trade_capacity_overrides")
+        .select("start_date, end_date, total_crews")
+        .eq("trade_id", booking.trade_id)
+        .lte("start_date", newEndDate)
+        .gte("end_date", shiftDateKey(booking.end_date, 1)),
     ]);
 
   const totalCrews = crews?.length ?? 0;
+  const datedTotals = (capacityOverrides ?? []).map((override) => ({
+    startDate: override.start_date,
+    endDate: override.end_date,
+    totalCrews: override.total_crews,
+  }));
   const addedDays = dateRange(
     new Date(`${shiftDateKey(booking.end_date, 1)}T00:00:00`),
     diffDays(booking.end_date, newEndDate),
@@ -432,13 +632,14 @@ export async function updateBookingEndDate(input: {
 
   // External commitments can't be pushed, so they hard-block the extension.
   for (const day of addedDays) {
+    const totalForDay = totalCrewsForDate(totalCrews, day, datedTotals);
     const externalOnDay = (externalCommitments ?? [])
       .filter((e) => day >= e.start_date && day <= e.end_date)
       .reduce((sum, e) => sum + e.crew_count, 0);
-    if (externalOnDay + booking.crew_count > totalCrews) {
+    if (externalOnDay + booking.crew_count > totalForDay) {
       return {
         ok: false,
-        error: `Can't extend into ${day}: this trade already has ${externalOnDay} of ${totalCrews} crew(s) committed elsewhere that day.`,
+        error: `Can't extend into ${day}: this trade already has ${externalOnDay} of ${totalForDay} crew(s) committed elsewhere that day.`,
       };
     }
   }

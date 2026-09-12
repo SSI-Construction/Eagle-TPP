@@ -1,13 +1,16 @@
-import { dateRange, diffDays, shiftDateKey, toDateKey } from "@/lib/capacity";
+import { dateRange, diffDays, shiftDateKey, toDateKey, totalCrewsForDate } from "@/lib/capacity";
 import { sendBookingCreatedEmail, sendBookingRescheduledEmail } from "@/lib/email";
 import type {
   Booking,
+  BookingCrewMember,
+  CapacityOverride,
   Crew,
   ExternalCommitment,
   Profile,
   Project,
   Trade,
   TradeCategory,
+  TradeCrewMember,
   TradeWithDetails,
 } from "@/lib/data";
 import type { UserRole } from "@/lib/database.types";
@@ -152,6 +155,19 @@ const seedExternalCommitments: ExternalCommitment[] = [
   { id: "ec-concrete-1", trade_id: "t-concrete", crew_count: 2, start_date: d(2), end_date: d(6), note: "Other GC job (Westside Plaza)", created_at: today },
 ];
 
+const seedCapacityOverrides: CapacityOverride[] = [];
+
+const seedTradeCrewMembers: TradeCrewMember[] = [
+  { id: "member-elec-1", trade_id: "t-electrical", name: "Dana Ortiz", role: "Foreperson", is_active: true, created_at: today },
+  { id: "member-elec-2", trade_id: "t-electrical", name: "Luis Chen", role: "Electrician", is_active: true, created_at: today },
+  { id: "member-elec-3", trade_id: "t-electrical", name: "Maya Brooks", role: "Apprentice", is_active: true, created_at: today },
+];
+
+const seedBookingCrewMembers: BookingCrewMember[] = [
+  { booking_id: "b-elec-1", crew_member_id: "member-elec-1", assigned_at: today },
+  { booking_id: "b-elec-1", crew_member_id: "member-elec-2", assigned_at: today },
+];
+
 // ---------------------------------------------------------------------------
 // Mutable in-memory state (deep-cloned from seed so re-imports don't share refs)
 // ---------------------------------------------------------------------------
@@ -166,6 +182,9 @@ const projects = clone(seedProjects);
 const profiles = clone(seedProfiles);
 const bookings = clone(seedBookings);
 let externalCommitments = clone(seedExternalCommitments);
+let capacityOverrides = clone(seedCapacityOverrides);
+const tradeCrewMembers = clone(seedTradeCrewMembers);
+let bookingCrewMembers = clone(seedBookingCrewMembers);
 
 function tradeWithDetails(trade: Trade): TradeWithDetails {
   return {
@@ -240,10 +259,32 @@ export function demoGetExternalCommitmentsInRange(
   return externalCommitments.filter((e) => overlapsRange(e.start_date, e.end_date, startDate, endDate));
 }
 
+export function demoGetCapacityOverridesInRange(
+  startDate: string,
+  endDate: string,
+): CapacityOverride[] {
+  return capacityOverrides.filter((override) =>
+    overlapsRange(override.start_date, override.end_date, startDate, endDate),
+  );
+}
+
 export function demoGetBookingsForTrade(tradeId: string): Booking[] {
   return bookings
     .filter((b) => b.trade_id === tradeId && b.status !== "cancelled")
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
+}
+
+export function demoGetTradeCrewMembers(tradeId: string): TradeCrewMember[] {
+  return tradeCrewMembers
+    .filter((member) => member.trade_id === tradeId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function demoGetBookingCrewMemberAssignments(tradeId: string): BookingCrewMember[] {
+  const memberIds = new Set(
+    tradeCrewMembers.filter((member) => member.trade_id === tradeId).map((member) => member.id),
+  );
+  return bookingCrewMembers.filter((assignment) => memberIds.has(assignment.crew_member_id));
 }
 
 export function demoConfirmBooking(
@@ -273,6 +314,12 @@ export function demoGetExternalCommitmentsForTrade(tradeId: string): ExternalCom
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 }
 
+export function demoGetCapacityOverridesForTrade(tradeId: string): CapacityOverride[] {
+  return capacityOverrides
+    .filter((override) => override.trade_id === tradeId)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+}
+
 // ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
@@ -294,6 +341,20 @@ function totalActiveCrews(tradeId: string): number {
   return crews.filter((c) => c.trade_id === tradeId && c.is_active).length;
 }
 
+function totalCrewsOnDate(tradeId: string, date: string): number {
+  return totalCrewsForDate(
+    totalActiveCrews(tradeId),
+    date,
+    capacityOverrides
+      .filter((override) => override.trade_id === tradeId)
+      .map((override) => ({
+        startDate: override.start_date,
+        endDate: override.end_date,
+        totalCrews: override.total_crews,
+      })),
+  );
+}
+
 export async function demoCreateBooking(input: {
   projectId: string;
   tradeId: string;
@@ -304,7 +365,6 @@ export async function demoCreateBooking(input: {
   createdBy: string;
   bookedByName: string;
 }): Promise<DemoActionResult> {
-  const total = totalActiveCrews(input.tradeId);
   const days = dateRange(
     new Date(`${input.startDate}T00:00:00`),
     diffDays(input.startDate, input.endDate) + 1,
@@ -318,7 +378,7 @@ export async function demoCreateBooking(input: {
       externalCommitments
         .filter((e) => e.trade_id === input.tradeId && day >= e.start_date && day <= e.end_date)
         .reduce((sum, e) => sum + e.crew_count, 0);
-    return booked + input.crewCount > total;
+    return booked + input.crewCount > totalCrewsOnDate(input.tradeId, day);
   });
 
   if (conflictDays.length > 0) {
@@ -385,7 +445,6 @@ export function demoUpdateBooking(input: {
   if (!booking) return { ok: false, error: "Booking not found." };
 
   if (input.status !== "cancelled") {
-    const total = totalActiveCrews(input.tradeId);
     const days = dateRange(
       new Date(`${input.startDate}T00:00:00`),
       diffDays(input.startDate, input.endDate) + 1,
@@ -408,7 +467,7 @@ export function demoUpdateBooking(input: {
               item.trade_id === input.tradeId && day >= item.start_date && day <= item.end_date,
           )
           .reduce((sum, item) => sum + item.crew_count, 0);
-      return used + input.crewCount > total;
+      return used + input.crewCount > totalCrewsOnDate(input.tradeId, day);
     });
     if (hasConflict) {
       return { ok: false, error: "The updated booking exceeds available capacity." };
@@ -496,13 +555,13 @@ export async function demoUpdateBookingEndDate(input: {
     return { ok: true };
   }
 
-  const total = totalActiveCrews(booking.trade_id);
   const addedDays = dateRange(
     new Date(`${shiftDateKey(booking.end_date, 1)}T00:00:00`),
     diffDays(booking.end_date, input.newEndDate),
   );
 
   for (const day of addedDays) {
+    const total = totalCrewsOnDate(booking.trade_id, day);
     const externalOnDay = externalCommitments
       .filter((e) => e.trade_id === booking.trade_id && day >= e.start_date && day <= e.end_date)
       .reduce((sum, e) => sum + e.crew_count, 0);
@@ -616,6 +675,96 @@ export function demoAddExternalCommitment(input: {
 
 export function demoRemoveExternalCommitment(commitmentId: string): DemoActionResult {
   externalCommitments = externalCommitments.filter((e) => e.id !== commitmentId);
+  return { ok: true };
+}
+
+export function demoAddCapacityOverride(input: {
+  tradeId: string;
+  startDate: string;
+  endDate: string;
+  totalCrews: number;
+  note?: string;
+}): DemoActionResult {
+  const hasOverlap = capacityOverrides.some(
+    (override) =>
+      override.trade_id === input.tradeId &&
+      overlapsRange(override.start_date, override.end_date, input.startDate, input.endDate),
+  );
+  if (hasOverlap) {
+    return { ok: false, error: "This date range overlaps an existing capacity override." };
+  }
+
+  capacityOverrides.push({
+    id: uid("capacity"),
+    trade_id: input.tradeId,
+    start_date: input.startDate,
+    end_date: input.endDate,
+    total_crews: input.totalCrews,
+    note: input.note || null,
+    created_at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+export function demoRemoveCapacityOverride(overrideId: string): DemoActionResult {
+  capacityOverrides = capacityOverrides.filter((override) => override.id !== overrideId);
+  return { ok: true };
+}
+
+export function demoAddTradeCrewMember(input: {
+  tradeId: string;
+  name: string;
+  role: string;
+}): DemoActionResult {
+  tradeCrewMembers.push({
+    id: uid("member"),
+    trade_id: input.tradeId,
+    name: input.name,
+    role: input.role,
+    is_active: true,
+    created_at: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+export function demoToggleTradeCrewMember(
+  memberId: string,
+  isActive: boolean,
+  tradeId: string,
+): DemoActionResult {
+  const member = tradeCrewMembers.find(
+    (candidate) => candidate.id === memberId && candidate.trade_id === tradeId,
+  );
+  if (!member) return { ok: false, error: "Crew member not found." };
+  member.is_active = isActive;
+  return { ok: true };
+}
+
+export function demoSetBookingCrewMembers(
+  bookingId: string,
+  memberIds: string[],
+  tradeId: string,
+): DemoActionResult {
+  const booking = bookings.find(
+    (candidate) => candidate.id === bookingId && candidate.trade_id === tradeId,
+  );
+  const membersBelongToTrade = memberIds.every((memberId) =>
+    tradeCrewMembers.some((member) => member.id === memberId && member.trade_id === tradeId),
+  );
+  if (!booking || !membersBelongToTrade) {
+    return { ok: false, error: "Booking or crew member not found." };
+  }
+
+  bookingCrewMembers = bookingCrewMembers.filter(
+    (assignment) => assignment.booking_id !== bookingId,
+  );
+  bookingCrewMembers.push(
+    ...memberIds.map((crewMemberId) => ({
+      booking_id: bookingId,
+      crew_member_id: crewMemberId,
+      assigned_at: new Date().toISOString(),
+    })),
+  );
   return { ok: true };
 }
 

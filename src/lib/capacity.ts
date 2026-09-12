@@ -10,6 +10,11 @@ export interface CapacityDay {
 export interface CapacityInput {
   tradeId: string;
   totalCrews: number;
+  overrides?: {
+    startDate: string;
+    endDate: string;
+    totalCrews: number;
+  }[];
   bookings: {
     startDate: string;
     endDate: string;
@@ -41,6 +46,18 @@ function overlaps(dateKey: string, startDate: string, endDate: string): boolean 
   return dateKey >= startDate && dateKey <= endDate;
 }
 
+export function totalCrewsForDate(
+  baselineTotal: number,
+  dateKey: string,
+  overrides: NonNullable<CapacityInput["overrides"]>,
+): number {
+  const matchingOverride = overrides
+    .filter((override) => overlaps(dateKey, override.startDate, override.endDate))
+    .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+
+  return matchingOverride?.totalCrews ?? baselineTotal;
+}
+
 /** Adds (or subtracts) whole days to a yyyy-MM-dd key, returning a new yyyy-MM-dd key. */
 export function shiftDateKey(dateKey: string, days: number): string {
   const d = new Date(`${dateKey}T00:00:00`);
@@ -58,6 +75,7 @@ export function diffDays(startKey: string, endKey: string): number {
 /** Builds per-day capacity (total / booked / available) for a single trade over a date range. */
 export function buildTradeCapacity(input: CapacityInput, days: string[]): CapacityDay[] {
   return days.map((date) => {
+    const totalCrews = totalCrewsForDate(input.totalCrews, date, input.overrides ?? []);
     const bookedFromBookings = input.bookings
       .filter((b) => b.status !== "cancelled" && overlaps(date, b.startDate, b.endDate))
       .reduce((sum, b) => sum + b.crewCount, 0);
@@ -67,9 +85,9 @@ export function buildTradeCapacity(input: CapacityInput, days: string[]): Capaci
     const booked = bookedFromBookings + bookedFromExternal;
     return {
       date,
-      totalCrews: input.totalCrews,
+      totalCrews,
       booked,
-      available: input.totalCrews - booked,
+      available: totalCrews - booked,
     };
   });
 }

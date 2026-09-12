@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EditBookingEndDateDialog } from "@/components/schedule/edit-booking-end-date-dialog";
-import type { Booking } from "@/lib/data";
+import { CrewAssignmentDialog } from "@/components/schedule/crew-assignment-dialog";
+import type { Booking, BookingCrewMember, TradeCrewMember } from "@/lib/data";
 import { confirmBooking } from "@/app/(app)/schedule/actions";
 
 export interface MyBookingRow extends Booking {
@@ -18,7 +19,15 @@ export interface MyBookingRow extends Booking {
   bookedByName: string;
 }
 
-export function MyBookingsPanel({ bookings }: { bookings: MyBookingRow[] }) {
+export function MyBookingsPanel({
+  bookings,
+  crewMembers,
+  crewAssignments,
+}: {
+  bookings: MyBookingRow[];
+  crewMembers: TradeCrewMember[];
+  crewAssignments: BookingCrewMember[];
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const today = new Date().toISOString().slice(0, 10);
@@ -34,12 +43,20 @@ export function MyBookingsPanel({ bookings }: { bookings: MyBookingRow[] }) {
         {upcoming.length === 0 && (
           <p className="text-sm text-muted-foreground">No upcoming bookings.</p>
         )}
-        {upcoming.map((b) => (
-          <div
-            key={b.id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
-          >
-            <div>
+        {upcoming.map((b) => {
+          const assignedMemberIds = crewAssignments
+            .filter((assignment) => assignment.booking_id === b.id)
+            .map((assignment) => assignment.crew_member_id);
+          const assignedMembers = assignedMemberIds
+            .map((id) => crewMembers.find((member) => member.id === id))
+            .filter((member): member is TradeCrewMember => Boolean(member));
+
+          return (
+            <div
+              key={b.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+            >
+              <div className="min-w-0">
               <div className="font-medium">{b.projectName}</div>
               {b.projectNumber && <div className="text-xs">Project #{b.projectNumber}</div>}
               <div className="text-muted-foreground">
@@ -53,8 +70,14 @@ export function MyBookingsPanel({ bookings }: { bookings: MyBookingRow[] }) {
               ) : b.projectAddress ? (
                 <div className="text-xs text-muted-foreground">{b.projectAddress}</div>
               ) : null}
-            </div>
-            <div className="flex items-center gap-2">
+              <div className="mt-1 text-xs">
+                <span className="text-muted-foreground">Scheduled: </span>
+                {assignedMembers.length > 0
+                  ? assignedMembers.map((member) => `${member.name} (${member.role})`).join(", ")
+                  : "No crew assigned"}
+              </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
               {b.status === "tentative" && (
                 <>
                   <Badge variant="outline" className="border-orange-300 bg-orange-50 text-xs text-orange-900">
@@ -85,9 +108,16 @@ export function MyBookingsPanel({ bookings }: { bookings: MyBookingRow[] }) {
                   endDate={b.end_date}
                 />
               )}
+              <CrewAssignmentDialog
+                bookingId={b.id}
+                projectName={b.projectName}
+                members={crewMembers}
+                assignedMemberIds={assignedMemberIds}
+              />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {past.length > 0 && (
           <details className="pt-2 text-sm text-muted-foreground">
