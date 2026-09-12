@@ -212,7 +212,7 @@ export default async function SchedulePage({
 
       <div className="flex-1 overflow-auto p-6">
         <div className="flex flex-col gap-6 lg:h-[calc(100vh-9rem)] lg:flex-row">
-          <div className="min-h-0 lg:flex-1">
+          <div className="min-h-0 min-w-0 lg:flex-1">
             <CapacityBoard
               categories={categories}
               rows={rows}
@@ -223,7 +223,7 @@ export default async function SchedulePage({
             />
           </div>
           {myBookings && (
-            <div className="w-full shrink-0 space-y-6 lg:w-96 lg:overflow-y-auto">
+            <div className="w-full shrink-0 space-y-6 lg:w-80 lg:overflow-y-auto xl:w-96">
               <TradeCrewRoster members={crewMembers} />
               <MyBookingsPanel
                 bookings={myBookings}
@@ -233,7 +233,7 @@ export default async function SchedulePage({
             </div>
           )}
           {adminBookings && (
-            <div className="w-full shrink-0 lg:w-96 lg:overflow-y-auto">
+            <div className="w-full shrink-0 lg:w-80 lg:overflow-y-auto xl:w-96">
               <AdminBookingsPanel bookings={adminBookings} projects={projects} trades={trades} />
             </div>
           )}

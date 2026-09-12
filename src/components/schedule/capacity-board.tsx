@@ -108,7 +108,7 @@ export function CapacityBoard({ categories, rows, days, projects, trades, canBoo
     <div className="flex flex-col gap-4 lg:h-full">
       <div className="flex flex-col gap-3">
         {/* Step 1: pick a category */}
-        <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+        <div className="flex flex-wrap items-center gap-1.5 pb-1">
           <button
             type="button"
             onClick={() => {
@@ -146,7 +146,7 @@ export function CapacityBoard({ categories, rows, days, projects, trades, canBoo
 
         {/* Step 2: pick a trade within that category */}
         {categoryId !== "all" && (
-          <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-lg border border-dashed p-2">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed p-2">
             <span className="shrink-0 px-1 text-xs text-muted-foreground">Trades:</span>
             {tradesInCategory.map((t) => (
               <button
