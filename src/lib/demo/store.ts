@@ -248,6 +248,18 @@ export function demoInviteStaff(input: {
   return { ok: true };
 }
 
+export function demoUpdateProfileRole(input: {
+  profileId: string;
+  role: UserRole;
+  tradeId?: string;
+}): DemoActionResult {
+  const profile = profiles.find((p) => p.id === input.profileId);
+  if (!profile) return { ok: false, error: "User not found." };
+  profile.role = input.role;
+  profile.trade_id = input.role === "trade" ? input.tradeId ?? null : null;
+  return { ok: true };
+}
+
 export function demoGetBookingsInRange(startDate: string, endDate: string): Booking[] {
   return bookings.filter((b) => overlapsRange(b.start_date, b.end_date, startDate, endDate));
 }

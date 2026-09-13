@@ -4,14 +4,26 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/data";
 import { isDemoMode } from "@/lib/demo/config";
-import { demoInviteStaff } from "@/lib/demo/store";
+import { demoInviteStaff, demoUpdateProfileRole } from "@/lib/demo/store";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 const inviteStaffSchema = z.object({
   fullName: z.string().trim().min(1).max(200),
   email: z.string().trim().email(),
   role: z.enum(["pm", "site_supervisor"]),
 });
+
+const updateProfileRoleSchema = z
+  .object({
+    profileId: z.string().min(1),
+    role: z.enum(["admin", "pm", "site_supervisor", "trade"]),
+    tradeId: z.string().min(1).optional(),
+  })
+  .refine((data) => data.role !== "trade" || !!data.tradeId, {
+    message: "Select a trade to link this account to.",
+    path: ["tradeId"],
+  });
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -68,5 +80,46 @@ export async function inviteStaff(
 
   revalidatePath("/team");
   revalidatePath("/projects");
+  return { ok: true };
+}
+
+/** Admin-only: change an existing user's role, e.g. for accounts created outside the invite flow. */
+export async function updateProfileRole(
+  input: z.infer<typeof updateProfileRoleSchema>,
+): Promise<ActionResult> {
+  const parsed = updateProfileRoleSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid role change" };
+  }
+
+  const currentProfile = await getCurrentProfile();
+  if (currentProfile?.role !== "admin") {
+    return { ok: false, error: "Only admins can change roles." };
+  }
+  if (currentProfile.id === parsed.data.profileId) {
+    return { ok: false, error: "You can't change your own role." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoUpdateProfileRole(parsed.data);
+    if (result.ok) revalidatePath("/team");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      role: parsed.data.role,
+      trade_id: parsed.data.role === "trade" ? parsed.data.tradeId : null,
+    })
+    .eq("id", parsed.data.profileId);
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  revalidatePath("/team");
+  revalidatePath("/projects");
+  revalidatePath("/trades");
   return { ok: true };
 }
