@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   getBookingsForTrade,
   getBookingsInRange,
@@ -32,6 +33,9 @@ export default async function SchedulePage({
   const rangeEnd = days[days.length - 1];
 
   const profile = await getCurrentProfile();
+  // Precast/Safety have their own placeholder dashboards for now.
+  if (profile?.role === "precast") redirect("/precast");
+  if (profile?.role === "safety") redirect("/safety");
   const isTrade = profile?.role === "trade";
 
   const [

@@ -5,16 +5,24 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CalendarRange, HardHat, Building2, LogOut, Users } from "lucide-react";
+import { CalendarRange, HardHat, Building2, LogOut, Users, Factory, ShieldCheck } from "lucide-react";
 import { signOut } from "@/app/(app)/actions";
 import { DemoRoleSwitcher } from "@/components/nav/demo-role-switcher";
 import type { Profile } from "@/lib/data";
 
-const NAV_ITEMS = [
-  { href: "/schedule", label: "Capacity Schedule", icon: CalendarRange },
-  { href: "/trades", label: "Trades", icon: HardHat },
-  { href: "/projects", label: "Projects", icon: Building2 },
+const NAV_ITEMS: {
+  href: string;
+  label: string;
+  icon: typeof CalendarRange;
+  adminOnly?: boolean;
+  roles?: Profile["role"][];
+}[] = [
+  { href: "/schedule", label: "Capacity Schedule", icon: CalendarRange, roles: ["admin", "pm", "site_supervisor", "trade"] },
+  { href: "/trades", label: "Trades", icon: HardHat, roles: ["admin", "pm", "site_supervisor", "trade"] },
+  { href: "/projects", label: "Projects", icon: Building2, roles: ["admin", "pm", "site_supervisor", "trade"] },
   { href: "/team", label: "Team", icon: Users, adminOnly: true },
+  { href: "/precast", label: "Precast", icon: Factory, roles: ["admin", "precast"] },
+  { href: "/safety", label: "Safety", icon: ShieldCheck, roles: ["admin", "safety"] },
 ];
 
 const ROLE_LABELS: Record<Profile["role"], string> = {
@@ -22,6 +30,8 @@ const ROLE_LABELS: Record<Profile["role"], string> = {
   pm: "Project Manager",
   site_supervisor: "Site Supervisor",
   trade: "Trade Partner",
+  precast: "Precast",
+  safety: "Safety",
 };
 
 const ROLE_AVATAR_STYLES: Record<Profile["role"], string> = {
@@ -29,6 +39,8 @@ const ROLE_AVATAR_STYLES: Record<Profile["role"], string> = {
   pm: "bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300",
   site_supervisor: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300",
   trade: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
+  precast: "bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300",
+  safety: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
 };
 
 export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoMode?: boolean }) {
@@ -36,7 +48,8 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
   const visibleItems = NAV_ITEMS.filter(
     (item) =>
       (item.href !== "/trades" || profile.role !== "trade") &&
-      (!item.adminOnly || profile.role === "admin"),
+      (!item.adminOnly || profile.role === "admin") &&
+      (!item.roles || item.roles.includes(profile.role)),
   );
   const initials = profile.full_name
     .split(" ")

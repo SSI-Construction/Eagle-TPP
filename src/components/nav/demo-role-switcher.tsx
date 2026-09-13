@@ -17,6 +17,8 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "pm", label: "Project Manager" },
   { value: "site_supervisor", label: "Site Supervisor" },
   { value: "trade", label: "Trade Partner" },
+  { value: "precast", label: "Precast" },
+  { value: "safety", label: "Safety" },
 ];
 
 export function DemoRoleSwitcher({ role }: { role: UserRole }) {

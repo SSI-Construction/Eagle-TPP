@@ -13,6 +13,9 @@ export default async function TradesPage() {
   if (profile?.role === "trade") {
     redirect(profile.trade_id ? `/trades/${profile.trade_id}` : "/schedule");
   }
+  // Precast/Safety have their own placeholder dashboards for now.
+  if (profile?.role === "precast") redirect("/precast");
+  if (profile?.role === "safety") redirect("/safety");
 
   const [categories, trades] = await Promise.all([getTradeCategories(), getTradesWithDetails()]);
 

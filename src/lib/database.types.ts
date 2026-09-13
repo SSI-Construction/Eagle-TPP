@@ -2,7 +2,7 @@
 // Regenerate with `supabase gen types typescript` once the project is linked
 // if you want a fully generated version.
 
-export type UserRole = "admin" | "pm" | "site_supervisor" | "trade";
+export type UserRole = "admin" | "pm" | "site_supervisor" | "trade" | "precast" | "safety";
 export type BookingStatus = "tentative" | "confirmed" | "cancelled";
 
 export interface Database {

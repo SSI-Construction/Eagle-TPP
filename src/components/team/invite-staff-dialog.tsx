@@ -26,7 +26,14 @@ import {
 } from "@/components/ui/select";
 import type { UserRole } from "@/lib/database.types";
 
-type StaffRole = Extract<UserRole, "pm" | "site_supervisor">;
+type StaffRole = Extract<UserRole, "pm" | "site_supervisor" | "precast" | "safety">;
+
+const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  pm: "Project Manager",
+  site_supervisor: "Site Supervisor",
+  precast: "Precast",
+  safety: "Safety",
+};
 
 export function InviteStaffDialog() {
   const router = useRouter();
@@ -98,12 +105,14 @@ export function InviteStaffDialog() {
               <Select value={role} onValueChange={(value) => setRole((value ?? "pm") as StaffRole)}>
                 <SelectTrigger className="w-full">
                   <SelectValue>
-                    {(value: string | null) => value === "site_supervisor" ? "Site Supervisor" : "Project Manager"}
+                    {(value: string | null) => STAFF_ROLE_LABELS[(value as StaffRole) ?? "pm"]}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pm">Project Manager</SelectItem>
                   <SelectItem value="site_supervisor">Site Supervisor</SelectItem>
+                  <SelectItem value="precast">Precast</SelectItem>
+                  <SelectItem value="safety">Safety</SelectItem>
                 </SelectContent>
               </Select>
             </div>

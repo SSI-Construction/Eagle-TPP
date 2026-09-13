@@ -9,6 +9,8 @@ const ROLE_LABELS = {
   pm: "Project Manager",
   site_supervisor: "Site Supervisor",
   trade: "Trade Partner",
+  precast: "Precast",
+  safety: "Safety",
 } as const;
 
 export default async function TeamPage() {

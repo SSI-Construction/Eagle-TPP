@@ -116,6 +116,8 @@ const seedProfiles: Profile[] = [
   { id: PROFILE_PM_ID, full_name: "Paula Manager", email: "paula.manager@example.com", role: "pm", trade_id: null, created_at: today },
   { id: PROFILE_SUPER_ID, full_name: "Sam Supervisor", email: "sam.supervisor@example.com", role: "site_supervisor", trade_id: null, created_at: today },
   { id: "demo-trade", full_name: "Terry Volt (Apex Electrical)", email: "terry@apexelectrical.example", role: "trade", trade_id: "t-electrical", created_at: today },
+  { id: "demo-precast", full_name: "Pat Precast", email: "pat.precast@example.com", role: "precast", trade_id: null, created_at: today },
+  { id: "demo-safety", full_name: "Sasha Safety", email: "sasha.safety@example.com", role: "safety", trade_id: null, created_at: today },
 ];
 
 const seedBookingsWithoutConfirmation: Array<Omit<Booking, "confirmed_by" | "confirmed_at">> = [
@@ -232,7 +234,7 @@ export function demoGetAllProfiles(): Profile[] {
 export function demoInviteStaff(input: {
   fullName: string;
   email: string;
-  role: Extract<UserRole, "pm" | "site_supervisor">;
+  role: Extract<UserRole, "pm" | "site_supervisor" | "precast" | "safety">;
 }): DemoActionResult {
   if (profiles.some((profile) => profile.email.toLowerCase() === input.email.toLowerCase())) {
     return { ok: false, error: "A user with this email already exists." };

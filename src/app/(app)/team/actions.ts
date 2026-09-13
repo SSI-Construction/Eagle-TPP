@@ -11,13 +11,13 @@ import { createClient } from "@/lib/supabase/server";
 const inviteStaffSchema = z.object({
   fullName: z.string().trim().min(1).max(200),
   email: z.string().trim().email(),
-  role: z.enum(["pm", "site_supervisor"]),
+  role: z.enum(["pm", "site_supervisor", "precast", "safety"]),
 });
 
 const updateProfileRoleSchema = z
   .object({
     profileId: z.string().min(1),
-    role: z.enum(["admin", "pm", "site_supervisor", "trade"]),
+    role: z.enum(["admin", "pm", "site_supervisor", "trade", "precast", "safety"]),
     tradeId: z.string().min(1).optional(),
   })
   .refine((data) => data.role !== "trade" || !!data.tradeId, {

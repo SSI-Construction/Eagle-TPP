@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { getAllProfiles, getCurrentProfile, getProjects } from "@/lib/data";
 import { AddProjectDialog } from "@/components/projects/add-project-dialog";
 
@@ -7,6 +8,10 @@ export default async function ProjectsPage() {
     getProjects(),
     getAllProfiles(),
   ]);
+
+  // Precast/Safety have their own placeholder dashboards for now.
+  if (profile?.role === "precast") redirect("/precast");
+  if (profile?.role === "safety") redirect("/safety");
 
   const profileNameById = new Map(profiles.map((p) => [p.id, p.full_name]));
   const canCreate = profile && ["admin", "pm", "site_supervisor"].includes(profile.role);
