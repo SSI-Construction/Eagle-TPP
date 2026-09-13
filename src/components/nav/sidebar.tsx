@@ -49,14 +49,14 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
     <>
       <header className="shrink-0 border-b bg-card md:hidden">
         <div className="flex min-h-20 items-center gap-3 px-4 py-2">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 max-w-[210px] flex-1">
             {/* eslint-disable-next-line @next/next/no-img-element -- static company brand asset */}
             <img
               src="/eagle-builders-logo.png"
               alt="Eagle Builders"
-              className="h-auto w-full max-w-[210px]"
+              className="h-auto w-full"
             />
-            <p className="mt-0.5 text-xs font-semibold text-muted-foreground">
+            <p className="mt-0.5 text-center text-xs font-semibold text-muted-foreground">
               Trade Partner Program
             </p>
           </div>
@@ -87,16 +87,18 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
       </header>
 
       <aside className="hidden h-full w-64 shrink-0 flex-col border-r bg-card md:flex">
-      <div className="flex min-h-28 flex-col items-start justify-center border-b px-5 py-3">
-        {/* eslint-disable-next-line @next/next/no-img-element -- static company brand asset */}
-        <img
-          src="/eagle-builders-logo.png"
-          alt="Eagle Builders"
-          className="h-auto w-full max-w-[216px]"
-        />
-        <p className="mt-1 text-xs font-semibold text-muted-foreground">
-          Trade Partner Program
-        </p>
+      <div className="flex min-h-28 flex-col items-center justify-center border-b px-5 py-3">
+        <div className="w-full max-w-[216px]">
+          {/* eslint-disable-next-line @next/next/no-img-element -- static company brand asset */}
+          <img
+            src="/eagle-builders-logo.png"
+            alt="Eagle Builders"
+            className="h-auto w-full"
+          />
+          <p className="mt-1 text-center text-xs font-semibold text-muted-foreground">
+            Trade Partner Program
+          </p>
+        </div>
       </div>
 
       <nav className="flex-1 space-y-1 p-3">
