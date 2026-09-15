@@ -285,6 +285,7 @@ export function CapacityBoard({ categories, rows, days, projects, trades, canBoo
                           tradeName={row.trade.company_name}
                           date={day.date}
                           details={details}
+                          canRequestChanges={canBook}
                           trigger={
                             <button
                               type="button"

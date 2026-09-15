@@ -5,12 +5,16 @@ import { getDemoRole } from "@/lib/demo/session";
 import {
   demoGetAllProfiles,
   demoGetBookingsForTrade,
+  demoGetBookingsForProject,
   demoGetBookingsInRange,
   demoGetBookingCrewMemberAssignments,
   demoGetCapacityOverridesForTrade,
   demoGetCapacityOverridesInRange,
+  demoGetExternalCommitmentCrewMembersForTrade,
   demoGetExternalCommitmentsForTrade,
   demoGetExternalCommitmentsInRange,
+  demoGetOrCreateCalendarExportToken,
+  demoGetPendingChangeRequests,
   demoGetProjects,
   demoGetTradeCategories,
   demoGetTradeCrewMembers,
@@ -30,8 +34,12 @@ export type ExternalCommitment =
 export type CapacityOverride =
   Database["public"]["Tables"]["trade_capacity_overrides"]["Row"];
 export type TradeCrewMember = Database["public"]["Tables"]["trade_crew_members"]["Row"];
+export type ExternalCommitmentCrewMember =
+  Database["public"]["Tables"]["trade_external_commitment_crew_members"]["Row"];
 export type BookingCrewMember =
   Database["public"]["Tables"]["booking_crew_members"]["Row"];
+export type BookingChangeRequest =
+  Database["public"]["Tables"]["booking_change_requests"]["Row"];
 
 /** Returns the signed-in user's profile, or null if not signed in / no profile row yet. */
 export async function getCurrentProfile(): Promise<Profile | null> {
@@ -167,6 +175,21 @@ export async function getBookingsForTrade(tradeId: string): Promise<Booking[]> {
   return data ?? [];
 }
 
+/** All non-cancelled bookings for a project (past and future), soonest first. */
+export async function getBookingsForProject(projectId: string): Promise<Booking[]> {
+  if (isDemoMode()) return demoGetBookingsForProject(projectId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("project_id", projectId)
+    .neq("status", "cancelled")
+    .order("start_date");
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function getTradeCrewMembers(tradeId: string): Promise<TradeCrewMember[]> {
   if (isDemoMode()) return demoGetTradeCrewMembers(tradeId);
 
@@ -232,6 +255,45 @@ export async function getExternalCommitmentsForTrade(
   return data ?? [];
 }
 
+export async function getExternalCommitmentCrewMembersForTrade(
+  tradeId: string,
+): Promise<ExternalCommitmentCrewMember[]> {
+  if (isDemoMode()) return demoGetExternalCommitmentCrewMembersForTrade(tradeId);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("trade_external_commitment_crew_members")
+    .select("external_commitment_id, crew_member_id, assigned_at, trade_crew_members!inner(trade_id)")
+    .eq("trade_crew_members.trade_id", tradeId);
+  if (error) throw error;
+  return (data ?? []).map((assignment) => ({
+    external_commitment_id: assignment.external_commitment_id,
+    crew_member_id: assignment.crew_member_id,
+    assigned_at: assignment.assigned_at,
+  }));
+}
+
+/** Lazily creates (and returns) the secret token that authenticates a trade's .ics export feed. */
+export async function getOrCreateCalendarExportToken(tradeId: string): Promise<string> {
+  if (isDemoMode()) return demoGetOrCreateCalendarExportToken(tradeId);
+
+  const supabase = await createClient();
+  const { data: existing } = await supabase
+    .from("trade_calendar_export_tokens")
+    .select("token")
+    .eq("trade_id", tradeId)
+    .maybeSingle();
+  if (existing?.token) return existing.token;
+
+  const { data: created, error } = await supabase
+    .from("trade_calendar_export_tokens")
+    .insert({ trade_id: tradeId })
+    .select("token")
+    .single();
+  if (error || !created) throw error ?? new Error("Failed to create calendar export token");
+  return created.token;
+}
+
 export async function getCapacityOverridesForTrade(
   tradeId: string,
 ): Promise<CapacityOverride[]> {
@@ -243,6 +305,24 @@ export async function getCapacityOverridesForTrade(
     .select("*")
     .eq("trade_id", tradeId)
     .order("start_date");
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * Pending booking reschedule/cancellation requests visible to the signed-in
+ * user (RLS scopes this to all requests for internal staff, or just their
+ * own trade's requests for a trade partner).
+ */
+export async function getPendingChangeRequests(): Promise<BookingChangeRequest[]> {
+  if (isDemoMode()) return demoGetPendingChangeRequests();
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("booking_change_requests")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
 }

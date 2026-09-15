@@ -4,6 +4,8 @@
 
 export type UserRole = "admin" | "pm" | "site_supervisor" | "trade" | "precast" | "safety";
 export type BookingStatus = "tentative" | "confirmed" | "cancelled";
+export type BookingRequestType = "reschedule" | "cancel";
+export type BookingRequestStatus = "pending" | "approved" | "rejected";
 
 export interface Database {
   public: {
@@ -39,6 +41,8 @@ export interface Database {
           notes: string | null;
           is_active: boolean;
           created_at: string;
+          ics_feed_url: string | null;
+          ics_synced_at: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["trades"]["Row"]> & {
           company_name: string;
@@ -116,6 +120,8 @@ export interface Database {
           end_date: string;
           note: string | null;
           created_at: string;
+          source: "manual" | "calendar_sync";
+          external_uid: string | null;
         };
         Insert: Partial<
           Database["public"]["Tables"]["trade_external_commitments"]["Row"]
@@ -168,6 +174,65 @@ export interface Database {
           crew_member_id: string;
         };
         Update: Partial<Database["public"]["Tables"]["booking_crew_members"]["Row"]>;
+      };
+      booking_change_requests: {
+        Row: {
+          id: string;
+          booking_id: string;
+          trade_id: string;
+          project_name: string;
+          trade_name: string;
+          request_type: BookingRequestType;
+          status: BookingRequestStatus;
+          requested_by: string | null;
+          requested_by_name: string;
+          requested_by_role: UserRole;
+          current_start_date: string;
+          current_end_date: string;
+          proposed_start_date: string | null;
+          proposed_end_date: string | null;
+          reason: string | null;
+          created_at: string;
+          resolved_by: string | null;
+          resolved_at: string | null;
+          resolution_note: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["booking_change_requests"]["Row"]> & {
+          booking_id: string;
+          trade_id: string;
+          project_name: string;
+          trade_name: string;
+          request_type: BookingRequestType;
+          requested_by_name: string;
+          requested_by_role: UserRole;
+          current_start_date: string;
+          current_end_date: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["booking_change_requests"]["Row"]>;
+      };
+      trade_external_commitment_crew_members: {
+        Row: {
+          external_commitment_id: string;
+          crew_member_id: string;
+          assigned_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["trade_external_commitment_crew_members"]["Row"]
+        > & { external_commitment_id: string; crew_member_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["trade_external_commitment_crew_members"]["Row"]
+        >;
+      };
+      trade_calendar_export_tokens: {
+        Row: {
+          trade_id: string;
+          token: string;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["trade_calendar_export_tokens"]["Row"]> & {
+          trade_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["trade_calendar_export_tokens"]["Row"]>;
       };
     };
   };

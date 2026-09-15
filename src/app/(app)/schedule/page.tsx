@@ -7,6 +7,7 @@ import {
   getCapacityOverridesInRange,
   getAllProfiles,
   getCurrentProfile,
+  getExternalCommitmentsForTrade,
   getExternalCommitmentsInRange,
   getProjects,
   getTradeCategories,
@@ -15,6 +16,8 @@ import {
 } from "@/lib/data";
 import { buildTradeCapacity, dateRange, toDateKey } from "@/lib/capacity";
 import { CapacityBoard, type BoardRow, type BookingDetail } from "@/components/schedule/capacity-board";
+import { ScheduleDatePicker } from "@/components/schedule/schedule-date-picker";
+import { ExternalCalendarSyncCard } from "@/components/schedule/external-calendar-sync-card";
 import { MyBookingsPanel } from "@/components/schedule/my-bookings-panel";
 import { AdminBookingsPanel } from "@/components/schedule/admin-bookings-panel";
 import { TradeCrewRoster } from "@/components/schedule/trade-crew-roster";
@@ -152,6 +155,7 @@ export default async function SchedulePage({
           getBookingsForTrade(profile.trade_id),
           getTradeCrewMembers(profile.trade_id),
           getBookingCrewMemberAssignments(profile.trade_id),
+          getExternalCommitmentsForTrade(profile.trade_id),
         ])
       : null;
   const myBookings = tradeDashboardData
@@ -166,6 +170,16 @@ export default async function SchedulePage({
       : null;
   const crewMembers = tradeDashboardData?.[1] ?? [];
   const crewAssignments = tradeDashboardData?.[2] ?? [];
+  const ownTrade = isTrade ? trades[0] : null;
+  const syncedCommitments = (tradeDashboardData?.[3] ?? [])
+    .filter((commitment) => commitment.source === "calendar_sync")
+    .map((commitment) => ({
+      id: commitment.id,
+      startDate: commitment.start_date,
+      endDate: commitment.end_date,
+      note: commitment.note,
+    }))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   const tradeNameById = new Map(trades.map((trade) => [trade.id, trade.company_name]));
   const adminBookings =
@@ -211,6 +225,7 @@ export default async function SchedulePage({
           >
             Next →
           </Link>
+          <ScheduleDatePicker startDate={toDateKey(startDate)} />
         </div>
       </header>
 
@@ -229,6 +244,11 @@ export default async function SchedulePage({
           {myBookings && (
             <div className="w-full shrink-0 space-y-6 lg:w-80 lg:overflow-y-auto xl:w-96">
               <TradeCrewRoster members={crewMembers} />
+              <ExternalCalendarSyncCard
+                icsFeedUrl={ownTrade?.ics_feed_url ?? null}
+                icsSyncedAt={ownTrade?.ics_synced_at ?? null}
+                syncedCommitments={syncedCommitments}
+              />
               <MyBookingsPanel
                 bookings={myBookings}
                 crewMembers={crewMembers}

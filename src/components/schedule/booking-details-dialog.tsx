@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { RequestBookingChangeDialog } from "@/components/schedule/request-booking-change-dialog";
 import type { BookingDetail } from "@/components/schedule/capacity-board";
 
 export function BookingDetailsDialog({
@@ -16,11 +17,14 @@ export function BookingDetailsDialog({
   date,
   details,
   trigger,
+  canRequestChanges = false,
 }: {
   tradeName: string;
   date: string;
   details: BookingDetail[];
   trigger: React.ReactElement;
+  /** Internal staff (admin/pm/site_supervisor) can request a reschedule/cancellation on confirmed bookings. */
+  canRequestChanges?: boolean;
 }) {
   return (
     <Dialog>
@@ -41,6 +45,7 @@ export function BookingDetailsDialog({
                 <th className="px-3 py-2 text-left font-medium">Crews</th>
                 <th className="px-3 py-2 text-left font-medium">Booked by</th>
                 <th className="px-3 py-2 text-left font-medium">Confirmed by</th>
+                {canRequestChanges && <th className="px-3 py-2 text-left font-medium">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -83,6 +88,18 @@ export function BookingDetailsDialog({
                       ? "Awaiting confirmation"
                       : detail.confirmedByName ?? "Not recorded"}
                   </td>
+                  {canRequestChanges && (
+                    <td className="px-3 py-3">
+                      {detail.source === "booking" && detail.status === "confirmed" && (
+                        <RequestBookingChangeDialog
+                          bookingId={detail.id}
+                          projectName={detail.label}
+                          startDate={detail.startDate}
+                          endDate={detail.endDate}
+                        />
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

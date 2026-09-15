@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EditBookingEndDateDialog } from "@/components/schedule/edit-booking-end-date-dialog";
+import { RequestBookingChangeDialog } from "@/components/schedule/request-booking-change-dialog";
 import { CrewAssignmentDialog } from "@/components/schedule/crew-assignment-dialog";
 import type { Booking, BookingCrewMember, TradeCrewMember } from "@/lib/data";
 import { confirmBooking } from "@/app/(app)/schedule/actions";
@@ -101,12 +102,21 @@ export function MyBookingsPanel({
                 </>
               )}
               {b.status === "confirmed" && (
-                <EditBookingEndDateDialog
-                  bookingId={b.id}
-                  projectName={b.projectName}
-                  startDate={b.start_date}
-                  endDate={b.end_date}
-                />
+                <>
+                  <EditBookingEndDateDialog
+                    bookingId={b.id}
+                    projectName={b.projectName}
+                    startDate={b.start_date}
+                    endDate={b.end_date}
+                  />
+                  <RequestBookingChangeDialog
+                    bookingId={b.id}
+                    projectName={b.projectName}
+                    startDate={b.start_date}
+                    endDate={b.end_date}
+                    triggerLabel="Request change/cancel"
+                  />
+                </>
               )}
               <CrewAssignmentDialog
                 bookingId={b.id}

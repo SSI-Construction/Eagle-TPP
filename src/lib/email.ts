@@ -80,3 +80,67 @@ export async function sendBookingCreatedEmail(notice: BookingCreatedNotice): Pro
 
   await sendEmail(notice.to, subject, text);
 }
+
+export interface ChangeRequestNotice {
+  to: string;
+  recipientName: string;
+  requestedByName: string;
+  projectName: string;
+  requestType: "reschedule" | "cancel";
+  currentStart: string;
+  currentEnd: string;
+  proposedStart: string | null;
+  proposedEnd: string | null;
+  reason: string | null;
+}
+
+/** Notifies the other side of a booking that a reschedule/cancellation was requested. */
+export async function sendChangeRequestEmail(notice: ChangeRequestNotice): Promise<void> {
+  const action = notice.requestType === "cancel" ? "cancel" : "reschedule";
+  const subject = `Booking ${action} request: ${notice.projectName}`;
+  const lines = [
+    `Hi ${notice.recipientName},`,
+    "",
+    `${notice.requestedByName} requested to ${action} the booking for "${notice.projectName}".`,
+    "",
+    `Current dates: ${notice.currentStart} \u2192 ${notice.currentEnd}`,
+  ];
+  if (notice.requestType === "reschedule" && notice.proposedStart && notice.proposedEnd) {
+    lines.push(`Proposed dates: ${notice.proposedStart} \u2192 ${notice.proposedEnd}`);
+  }
+  if (notice.reason) {
+    lines.push("", `Reason: ${notice.reason}`);
+  }
+  lines.push("", "Sign in to review and respond to this request.", "", "— Trade Schedule");
+
+  await sendEmail(notice.to, subject, lines.join("\n"));
+}
+
+export interface ChangeRequestDecisionNotice {
+  to: string;
+  recipientName: string;
+  projectName: string;
+  requestType: "reschedule" | "cancel";
+  decision: "approved" | "rejected";
+  respondedByName: string;
+  note: string | null;
+}
+
+/** Notifies the original requester whether their reschedule/cancellation request was accepted. */
+export async function sendChangeRequestDecisionEmail(
+  notice: ChangeRequestDecisionNotice,
+): Promise<void> {
+  const action = notice.requestType === "cancel" ? "cancellation" : "reschedule";
+  const subject = `Your ${action} request was ${notice.decision}: ${notice.projectName}`;
+  const lines = [
+    `Hi ${notice.recipientName},`,
+    "",
+    `${notice.respondedByName} ${notice.decision} your ${action} request for "${notice.projectName}".`,
+  ];
+  if (notice.note) {
+    lines.push("", `Note: ${notice.note}`);
+  }
+  lines.push("", "— Trade Schedule");
+
+  await sendEmail(notice.to, subject, lines.join("\n"));
+}

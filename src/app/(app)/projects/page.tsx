@@ -1,12 +1,20 @@
 import { redirect } from "next/navigation";
-import { getAllProfiles, getCurrentProfile, getProjects } from "@/lib/data";
+import {
+  getAllProfiles,
+  getBookingsForProject,
+  getCurrentProfile,
+  getProjects,
+  getTradesWithDetails,
+} from "@/lib/data";
 import { AddProjectDialog } from "@/components/projects/add-project-dialog";
+import { ProjectBookingsDialog, type ProjectBookingRow } from "@/components/projects/project-bookings-dialog";
 
 export default async function ProjectsPage() {
-  const [profile, projects, profiles] = await Promise.all([
+  const [profile, projects, profiles, trades] = await Promise.all([
     getCurrentProfile(),
     getProjects(),
     getAllProfiles(),
+    getTradesWithDetails(),
   ]);
 
   // Precast/Safety have their own placeholder dashboards for now.
@@ -14,7 +22,26 @@ export default async function ProjectsPage() {
   if (profile?.role === "safety") redirect("/safety");
 
   const profileNameById = new Map(profiles.map((p) => [p.id, p.full_name]));
+  const tradeNameById = new Map(trades.map((t) => [t.id, t.company_name]));
   const canCreate = profile && ["admin", "pm", "site_supervisor"].includes(profile.role);
+
+  const bookingsByProject = new Map<string, ProjectBookingRow[]>(
+    await Promise.all(
+      projects.map(async (project) => {
+        const bookings = await getBookingsForProject(project.id);
+        const rows: ProjectBookingRow[] = bookings.map((booking) => ({
+          id: booking.id,
+          tradeName: tradeNameById.get(booking.trade_id) ?? "Unknown trade",
+          bookedByName: booking.created_by ? profileNameById.get(booking.created_by) ?? "Unknown" : "Unknown",
+          confirmedByName: booking.confirmed_by ? profileNameById.get(booking.confirmed_by) ?? "Unknown" : null,
+          startDate: booking.start_date,
+          endDate: booking.end_date,
+          status: booking.status,
+        }));
+        return [project.id, rows] as const;
+      }),
+    ),
+  );
 
   return (
     <div className="p-6">
@@ -43,7 +70,10 @@ export default async function ProjectsPage() {
             {projects.map((project) => (
               <tr key={project.id} className="border-t">
                 <td className="px-4 py-3">
-                  <div className="font-medium">{project.name}</div>
+                  <ProjectBookingsDialog
+                    projectName={project.name}
+                    bookings={bookingsByProject.get(project.id) ?? []}
+                  />
                   {project.map_link ? (
                     <a href={project.map_link} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
                       {project.address || "Open location"}

@@ -3,20 +3,35 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/data";
-import { dateRange, diffDays, shiftDateKey, totalCrewsForDate } from "@/lib/capacity";
+import { dateRange, diffDays, shiftDateKey, toDateKey, totalCrewsForDate } from "@/lib/capacity";
+import { parseIcsBusyRanges } from "@/lib/ics";
 import { isDemoMode } from "@/lib/demo/config";
 import {
+  demoApplyCalendarSync,
+  demoAddExternalJob,
   demoCancelBooking,
   demoConfirmBooking,
   demoCreateBooking,
   demoAddTradeCrewMember,
+  demoDisconnectCalendarSync,
+  demoGetTradeIcsUrl,
+  demoRemoveExternalJob,
+  demoRequestBookingChange,
+  demoRespondToChangeRequest,
   demoSetBookingCrewMembers,
   demoToggleTradeCrewMember,
   demoUpdateBooking,
   demoUpdateBookingEndDate,
 } from "@/lib/demo/store";
-import { sendBookingCreatedEmail, sendBookingRescheduledEmail } from "@/lib/email";
+import type { BookingRequestType } from "@/lib/database.types";
+import {
+  sendBookingCreatedEmail,
+  sendBookingRescheduledEmail,
+  sendChangeRequestDecisionEmail,
+  sendChangeRequestEmail,
+} from "@/lib/email";
 
 const bookingSchema = z
   .object({
@@ -756,4 +771,518 @@ function dayCount(startDate: string, endDate: string): number {
   const start = new Date(`${startDate}T00:00:00`);
   const end = new Date(`${endDate}T00:00:00`);
   return Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
+const STAFF_ROLES = ["admin", "pm", "site_supervisor"] as const;
+
+const changeRequestSchema = z
+  .object({
+    bookingId: z.string().min(1),
+    requestType: z.enum(["reschedule", "cancel"]),
+    proposedStartDate: z.string().optional(),
+    proposedEndDate: z.string().optional(),
+    reason: z.string().max(1000).optional(),
+  })
+  .refine(
+    (v) =>
+      v.requestType !== "reschedule" ||
+      (!!v.proposedStartDate && !!v.proposedEndDate && v.proposedEndDate >= v.proposedStartDate),
+    { message: "Provide valid proposed start and end dates.", path: ["proposedEndDate"] },
+  );
+
+export type ChangeRequestResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Lets a trade (for its own confirmed bookings) or internal staff propose a
+ * reschedule or cancellation. The change only takes effect once the other
+ * side approves it via `respondToChangeRequest`.
+ */
+export async function requestBookingChange(
+  input: z.infer<typeof changeRequestSchema>,
+): Promise<ChangeRequestResult> {
+  const parsed = changeRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request" };
+  }
+  const { bookingId, requestType, proposedStartDate, proposedEndDate, reason } = parsed.data;
+
+  const profile = await getCurrentProfile();
+  if (!profile) return { ok: false, error: "Not signed in." };
+  const isStaff = (STAFF_ROLES as readonly string[]).includes(profile.role);
+  if (!isStaff && !(profile.role === "trade" && profile.trade_id)) {
+    return { ok: false, error: "You do not have permission to request booking changes." };
+  }
+
+  if (isDemoMode()) {
+    const result = await demoRequestBookingChange({
+      bookingId,
+      requestType: requestType as BookingRequestType,
+      proposedStartDate,
+      proposedEndDate,
+      reason,
+      requestedBy: profile.id,
+      requestedByName: profile.full_name || "Someone",
+      requestedByRole: profile.role,
+      requesterTradeId: profile.trade_id,
+    });
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { data: booking, error: bookingError } = await supabase
+    .from("bookings")
+    .select("id, trade_id, project_id, start_date, end_date, status, created_by")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (bookingError || !booking) return { ok: false, error: "Booking not found." };
+  if (booking.status !== "confirmed") {
+    return { ok: false, error: "Only confirmed bookings can have a change request." };
+  }
+  if (!isStaff && booking.trade_id !== profile.trade_id) {
+    return { ok: false, error: "You can only request changes for your own trade's bookings." };
+  }
+
+  const { data: existingPending } = await supabase
+    .from("booking_change_requests")
+    .select("id")
+    .eq("booking_id", bookingId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (existingPending) {
+    return { ok: false, error: "There's already a pending request for this booking." };
+  }
+
+  if (
+    requestType === "reschedule" &&
+    proposedStartDate === booking.start_date &&
+    proposedEndDate === booking.end_date
+  ) {
+    return { ok: false, error: "Proposed dates match the current booking dates." };
+  }
+
+  const [{ data: trade }, { data: project }] = await Promise.all([
+    supabase.from("trades").select("company_name, email").eq("id", booking.trade_id).maybeSingle(),
+    supabase.from("projects").select("name").eq("id", booking.project_id).maybeSingle(),
+  ]);
+  const tradeName = trade?.company_name ?? "Trade";
+  const projectName = project?.name ?? "Unknown project";
+
+  const { error } = await supabase.from("booking_change_requests").insert({
+    booking_id: bookingId,
+    trade_id: booking.trade_id,
+    project_name: projectName,
+    trade_name: tradeName,
+    request_type: requestType,
+    requested_by: profile.id,
+    requested_by_name: profile.full_name || "Someone",
+    requested_by_role: profile.role,
+    current_start_date: booking.start_date,
+    current_end_date: booking.end_date,
+    proposed_start_date: requestType === "reschedule" ? proposedStartDate : null,
+    proposed_end_date: requestType === "reschedule" ? proposedEndDate : null,
+    reason: reason || null,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  const emailPayload = {
+    requestedByName: profile.full_name || "Someone",
+    projectName,
+    requestType,
+    currentStart: booking.start_date,
+    currentEnd: booking.end_date,
+    proposedStart: proposedStartDate ?? null,
+    proposedEnd: proposedEndDate ?? null,
+    reason: reason ?? null,
+  };
+
+  if (isStaff) {
+    if (trade?.email) {
+      await sendChangeRequestEmail({ to: trade.email, recipientName: tradeName, ...emailPayload });
+    }
+  } else if (booking.created_by) {
+    const { data: creator } = await supabase
+      .from("profiles")
+      .select("email, full_name")
+      .eq("id", booking.created_by)
+      .maybeSingle();
+    if (creator?.email) {
+      await sendChangeRequestEmail({
+        to: creator.email,
+        recipientName: creator.full_name || "there",
+        ...emailPayload,
+      });
+    }
+  }
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+/**
+ * Lets the side that did NOT create a change request approve or reject it.
+ * Approving applies the reschedule/cancellation to the booking itself via
+ * the service-role client, since the requester's counterparty may not have
+ * RLS permission to edit those specific booking columns directly.
+ */
+export async function respondToChangeRequest(input: {
+  requestId: string;
+  decision: "approved" | "rejected";
+  note?: string;
+}): Promise<ChangeRequestResult> {
+  const { requestId, decision, note } = input;
+  if (!requestId) return { ok: false, error: "Invalid request." };
+
+  const profile = await getCurrentProfile();
+  if (!profile) return { ok: false, error: "Not signed in." };
+
+  if (isDemoMode()) {
+    const result = await demoRespondToChangeRequest({
+      requestId,
+      decision,
+      note,
+      responderId: profile.id,
+      responderName: profile.full_name || "Someone",
+      responderRole: profile.role,
+      responderTradeId: profile.trade_id,
+    });
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { data: request, error: requestError } = await supabase
+    .from("booking_change_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (requestError || !request) return { ok: false, error: "Request not found." };
+  if (request.status !== "pending") {
+    return { ok: false, error: "This request has already been resolved." };
+  }
+
+  const isStaff = (STAFF_ROLES as readonly string[]).includes(profile.role);
+  const canRespond =
+    request.requested_by_role === "trade"
+      ? isStaff
+      : profile.role === "trade" && profile.trade_id === request.trade_id;
+  if (!canRespond) {
+    return { ok: false, error: "You aren't able to respond to this request." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("booking_change_requests")
+    .update({ status: decision, resolution_note: note || null })
+    .eq("id", requestId)
+    .eq("status", "pending");
+  if (updateError) return { ok: false, error: updateError.message };
+
+  if (decision === "approved") {
+    const admin = createAdminClient();
+    if (request.request_type === "cancel") {
+      const { error } = await admin
+        .from("bookings")
+        .update({ status: "cancelled" })
+        .eq("id", request.booking_id);
+      if (error) {
+        return { ok: false, error: `Request approved, but failed to cancel the booking: ${error.message}` };
+      }
+    } else {
+      const { error } = await admin
+        .from("bookings")
+        .update({ start_date: request.proposed_start_date, end_date: request.proposed_end_date })
+        .eq("id", request.booking_id);
+      if (error) {
+        return { ok: false, error: `Request approved, but failed to update the booking: ${error.message}` };
+      }
+    }
+  }
+
+  const { data: requester } = await supabase
+    .from("profiles")
+    .select("email, full_name")
+    .eq("id", request.requested_by)
+    .maybeSingle();
+  if (requester?.email) {
+    await sendChangeRequestDecisionEmail({
+      to: requester.email,
+      recipientName: requester.full_name || "there",
+      projectName: request.project_name,
+      requestType: request.request_type,
+      decision,
+      respondedByName: profile.full_name || "Someone",
+      note: note ?? null,
+    });
+  }
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+const calendarUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter a calendar feed URL.")
+  .max(2000)
+  .url("Enter a valid URL.")
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: "The calendar feed URL must start with http:// or https://.",
+  });
+
+export type CalendarSyncResult =
+  | { ok: true; count: number; skippedRecurring: number }
+  | { ok: false; error: string };
+
+async function fetchAndParseIcsFeed(url: string): Promise<
+  | { ok: true; ranges: ReturnType<typeof parseIcsBusyRanges>["ranges"]; skippedRecurring: number }
+  | { ok: false; error: string }
+> {
+  let response: Response;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      response = await fetch(url, { signal: controller.signal, headers: { Accept: "text/calendar, */*" } });
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return { ok: false, error: "Couldn't reach that calendar URL. Double check the link and try again." };
+  }
+
+  if (!response.ok) {
+    return { ok: false, error: `The calendar server responded with an error (${response.status}).` };
+  }
+
+  const text = await response.text();
+  if (text.length > 2_000_000 || !/BEGIN:VCALENDAR/i.test(text)) {
+    return { ok: false, error: "That doesn't look like a valid calendar (.ics) feed." };
+  }
+
+  const { ranges, skippedRecurring } = parseIcsBusyRanges(text, toDateKey(new Date()));
+  return { ok: true, ranges, skippedRecurring };
+}
+
+/** Connects (or re-points) a trade's external calendar feed and syncs it immediately. */
+export async function saveExternalCalendarUrl(url: string): Promise<CalendarSyncResult> {
+  const parsed = calendarUrlSchema.safeParse(url);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid URL" };
+  }
+
+  const profile = await getCurrentProfile();
+  if (!profile || profile.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only a trade partner can connect their own calendar." };
+  }
+
+  const feedResult = await fetchAndParseIcsFeed(parsed.data);
+  if (!feedResult.ok) return feedResult;
+
+  if (isDemoMode()) {
+    const result = demoApplyCalendarSync({
+      tradeId: profile.trade_id,
+      url: parsed.data,
+      ranges: feedResult.ranges,
+    });
+    if (!result.ok) return result;
+    revalidatePath("/schedule");
+    return { ok: true, count: feedResult.ranges.length, skippedRecurring: feedResult.skippedRecurring };
+  }
+
+  const supabase = await createClient();
+  const { error: deleteError } = await supabase
+    .from("trade_external_commitments")
+    .delete()
+    .eq("trade_id", profile.trade_id)
+    .eq("source", "calendar_sync");
+  if (deleteError) return { ok: false, error: deleteError.message };
+
+  if (feedResult.ranges.length > 0) {
+    const { error: insertError } = await supabase.from("trade_external_commitments").insert(
+      feedResult.ranges.map((range) => ({
+        trade_id: profile.trade_id,
+        crew_count: 1,
+        start_date: range.startDate,
+        end_date: range.endDate,
+        note: range.summary,
+        source: "calendar_sync" as const,
+        external_uid: range.uid,
+      })),
+    );
+    if (insertError) return { ok: false, error: insertError.message };
+  }
+
+  const { error: updateError } = await supabase
+    .from("trades")
+    .update({ ics_feed_url: parsed.data, ics_synced_at: new Date().toISOString() })
+    .eq("id", profile.trade_id);
+  if (updateError) return { ok: false, error: updateError.message };
+
+  revalidatePath("/schedule");
+  return { ok: true, count: feedResult.ranges.length, skippedRecurring: feedResult.skippedRecurring };
+}
+
+/** Re-fetches the already-connected calendar feed and refreshes synced busy periods. */
+export async function syncExternalCalendarNow(): Promise<CalendarSyncResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || profile.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only a trade partner can sync their own calendar." };
+  }
+
+  let icsFeedUrl: string | null;
+  if (isDemoMode()) {
+    icsFeedUrl = demoGetTradeIcsUrl(profile.trade_id);
+  } else {
+    const supabase = await createClient();
+    const { data: trade } = await supabase
+      .from("trades")
+      .select("ics_feed_url")
+      .eq("id", profile.trade_id)
+      .maybeSingle();
+    icsFeedUrl = trade?.ics_feed_url ?? null;
+  }
+
+  if (!icsFeedUrl) {
+    return { ok: false, error: "No calendar is connected yet." };
+  }
+
+  return saveExternalCalendarUrl(icsFeedUrl);
+}
+
+/** Disconnects the trade's calendar feed and removes any commitments it created. */
+export async function disconnectExternalCalendar(): Promise<CalendarSyncResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || profile.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only a trade partner can disconnect their own calendar." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoDisconnectCalendarSync(profile.trade_id);
+    if (!result.ok) return result;
+    revalidatePath("/schedule");
+    return { ok: true, count: 0, skippedRecurring: 0 };
+  }
+
+  const supabase = await createClient();
+  const { error: deleteError } = await supabase
+    .from("trade_external_commitments")
+    .delete()
+    .eq("trade_id", profile.trade_id)
+    .eq("source", "calendar_sync");
+  if (deleteError) return { ok: false, error: deleteError.message };
+
+  const { error: updateError } = await supabase
+    .from("trades")
+    .update({ ics_feed_url: null, ics_synced_at: null })
+    .eq("id", profile.trade_id);
+  if (updateError) return { ok: false, error: updateError.message };
+
+  revalidatePath("/schedule");
+  return { ok: true, count: 0, skippedRecurring: 0 };
+}
+
+const externalJobSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    startDate: z.string().min(1),
+    endDate: z.string().min(1),
+    crewMemberIds: z.array(z.string().min(1)).max(50).default([]),
+  })
+  .refine((v) => v.endDate >= v.startDate, {
+    message: "End date must be on or after the start date",
+    path: ["endDate"],
+  });
+
+export type ExternalJobResult = { ok: true } | { ok: false; error: string };
+
+/** Lets a trade schedule its own crew against work booked outside this company. */
+export async function addExternalJob(
+  input: z.infer<typeof externalJobSchema>,
+): Promise<ExternalJobResult> {
+  const parsed = externalJobSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid job" };
+  }
+
+  const profile = await getCurrentProfile();
+  if (!profile || profile.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only a trade partner can schedule their own crew." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoAddExternalJob({
+      tradeId: profile.trade_id,
+      title: parsed.data.title,
+      startDate: parsed.data.startDate,
+      endDate: parsed.data.endDate,
+      crewMemberIds: parsed.data.crewMemberIds,
+    });
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  if (parsed.data.crewMemberIds.length > 0) {
+    const { data: members, error: membersError } = await supabase
+      .from("trade_crew_members")
+      .select("id")
+      .eq("trade_id", profile.trade_id)
+      .in("id", parsed.data.crewMemberIds);
+    if (membersError || members?.length !== parsed.data.crewMemberIds.length) {
+      return { ok: false, error: "One or more crew members could not be found." };
+    }
+  }
+
+  const { data: job, error } = await supabase
+    .from("trade_external_commitments")
+    .insert({
+      trade_id: profile.trade_id,
+      crew_count: Math.max(1, parsed.data.crewMemberIds.length),
+      start_date: parsed.data.startDate,
+      end_date: parsed.data.endDate,
+      note: parsed.data.title,
+      source: "manual",
+    })
+    .select("id")
+    .single();
+  if (error || !job) return { ok: false, error: error?.message ?? "Failed to create job" };
+
+  if (parsed.data.crewMemberIds.length > 0) {
+    const { error: linkError } = await supabase.from("trade_external_commitment_crew_members").insert(
+      parsed.data.crewMemberIds.map((crewMemberId) => ({
+        external_commitment_id: job.id,
+        crew_member_id: crewMemberId,
+      })),
+    );
+    if (linkError) return { ok: false, error: linkError.message };
+  }
+
+  revalidatePath("/schedule");
+  return { ok: true };
+}
+
+/** Removes a manually-scheduled outside job (calendar-synced entries are managed via the sync card instead). */
+export async function removeExternalJob(commitmentId: string): Promise<ExternalJobResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || profile.role !== "trade" || !profile.trade_id) {
+    return { ok: false, error: "Only a trade partner can remove their own jobs." };
+  }
+
+  if (isDemoMode()) {
+    const result = demoRemoveExternalJob(commitmentId, profile.trade_id);
+    if (result.ok) revalidatePath("/schedule");
+    return result;
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("trade_external_commitments")
+    .delete()
+    .eq("id", commitmentId)
+    .eq("trade_id", profile.trade_id)
+    .eq("source", "manual");
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/schedule");
+  return { ok: true };
 }

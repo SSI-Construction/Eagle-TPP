@@ -5,10 +5,11 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CalendarRange, HardHat, Building2, LogOut, Users, Factory, ShieldCheck } from "lucide-react";
+import { CalendarRange, CalendarClock, HardHat, Building2, LogOut, Users, Factory, ShieldCheck } from "lucide-react";
 import { signOut } from "@/app/(app)/actions";
 import { DemoRoleSwitcher } from "@/components/nav/demo-role-switcher";
-import type { Profile } from "@/lib/data";
+import { NotificationsDropdown } from "@/components/nav/notifications-dropdown";
+import type { BookingChangeRequest, Profile } from "@/lib/data";
 
 const NAV_ITEMS: {
   href: string;
@@ -18,6 +19,7 @@ const NAV_ITEMS: {
   roles?: Profile["role"][];
 }[] = [
   { href: "/schedule", label: "Capacity Schedule", icon: CalendarRange, roles: ["admin", "pm", "site_supervisor", "trade"] },
+  { href: "/schedule/master", label: "Master Schedule", icon: CalendarClock, roles: ["trade"] },
   { href: "/trades", label: "Trades", icon: HardHat, roles: ["admin", "pm", "site_supervisor", "trade"] },
   { href: "/projects", label: "Projects", icon: Building2, roles: ["admin", "pm", "site_supervisor", "trade"] },
   { href: "/team", label: "Team", icon: Users, adminOnly: true },
@@ -43,7 +45,15 @@ const ROLE_AVATAR_STYLES: Record<Profile["role"], string> = {
   safety: "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
 };
 
-export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoMode?: boolean }) {
+export function Sidebar({
+  profile,
+  demoMode = false,
+  pendingChangeRequests = [],
+}: {
+  profile: Profile;
+  demoMode?: boolean;
+  pendingChangeRequests?: BookingChangeRequest[];
+}) {
   const pathname = usePathname();
   const visibleItems = NAV_ITEMS.filter(
     (item) =>
@@ -51,6 +61,11 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
       (!item.adminOnly || profile.role === "admin") &&
       (!item.roles || item.roles.includes(profile.role)),
   );
+  // Longest matching href wins, so "/schedule/master" doesn't also light up "/schedule".
+  const activeHref = visibleItems
+    .map((item) => item.href)
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
   const initials = profile.full_name
     .split(" ")
     .map((p) => p[0])
@@ -74,10 +89,11 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
             </p>
           </div>
           <span className="ml-auto text-xs text-muted-foreground">{ROLE_LABELS[profile.role]}</span>
+          <NotificationsDropdown requests={pendingChangeRequests} profile={profile} />
         </div>
         <nav className="flex gap-1 overflow-x-auto border-t p-2">
           {visibleItems.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = item.href === activeHref;
             const Icon = item.icon;
             return (
               <Link
@@ -117,7 +133,7 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
       <nav className="flex-1 space-y-1 p-3">
         {visibleItems.map(
           (item) => {
-            const active = pathname.startsWith(item.href);
+            const active = item.href === activeHref;
             const Icon = item.icon;
             return (
               <Link
@@ -152,6 +168,7 @@ export function Sidebar({ profile, demoMode = false }: { profile: Profile; demoM
               {ROLE_LABELS[profile.role]}
             </p>
           </div>
+          <NotificationsDropdown requests={pendingChangeRequests} profile={profile} />
         </div>
         <form action={signOut}>
           <Button

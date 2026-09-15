@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentProfile } from "@/lib/data";
+import { getCurrentProfile, getPendingChangeRequests } from "@/lib/data";
 import { Sidebar } from "@/components/nav/sidebar";
 import { isDemoMode } from "@/lib/demo/config";
 
@@ -11,6 +11,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
+  const pendingChangeRequests = await getPendingChangeRequests();
+
   return (
     <div className="flex h-screen flex-col">
       {demoMode && (
@@ -19,7 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <Sidebar profile={profile} demoMode={demoMode} />
+        <Sidebar profile={profile} demoMode={demoMode} pendingChangeRequests={pendingChangeRequests} />
         <main className="flex-1 overflow-y-auto bg-muted/20">{children}</main>
       </div>
     </div>

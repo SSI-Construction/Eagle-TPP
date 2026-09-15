@@ -1,11 +1,18 @@
 import { dateRange, diffDays, shiftDateKey, toDateKey, totalCrewsForDate } from "@/lib/capacity";
-import { sendBookingCreatedEmail, sendBookingRescheduledEmail } from "@/lib/email";
+import {
+  sendBookingCreatedEmail,
+  sendBookingRescheduledEmail,
+  sendChangeRequestDecisionEmail,
+  sendChangeRequestEmail,
+} from "@/lib/email";
 import type {
   Booking,
+  BookingChangeRequest,
   BookingCrewMember,
   CapacityOverride,
   Crew,
   ExternalCommitment,
+  ExternalCommitmentCrewMember,
   Profile,
   Project,
   Trade,
@@ -13,7 +20,7 @@ import type {
   TradeCrewMember,
   TradeWithDetails,
 } from "@/lib/data";
-import type { UserRole } from "@/lib/database.types";
+import type { BookingRequestType, UserRole } from "@/lib/database.types";
 
 // In-memory demo dataset so the UI can be explored (and screenshotted) before
 // any Supabase project/migration exists. Resets whenever the dev server
@@ -43,18 +50,21 @@ const seedCategories: TradeCategory[] = [
   { id: "cat-paving", name: "Paving / Concrete Flatwork", sort_order: 190 },
 ];
 
-const seedTrades: Trade[] = [
-  { id: "t-electrical", company_name: "Apex Electrical", phone: "555-0101", email: "dispatch@apexelectrical.example", notes: null, is_active: true, created_at: today },
-  { id: "t-plumbing", company_name: "Summit Plumbing", phone: "555-0102", email: "office@summitplumbing.example", notes: null, is_active: true, created_at: today },
-  { id: "t-hvac", company_name: "Coastal HVAC", phone: "555-0103", email: "info@coastalhvac.example", notes: null, is_active: true, created_at: today },
-  { id: "t-framing", company_name: "Ironclad Framing", phone: "555-0104", email: "jobs@ironcladframing.example", notes: null, is_active: true, created_at: today },
-  { id: "t-concrete", company_name: "Precision Concrete", phone: "555-0105", email: "scheduling@precisionconcrete.example", notes: null, is_active: true, created_at: today },
-  { id: "t-painting", company_name: "BrightCoat Painting", phone: "555-0106", email: "hello@brightcoat.example", notes: null, is_active: true, created_at: today },
-  { id: "t-fire", company_name: "SafeGuard Fire Suppression", phone: "555-0107", email: "ops@safeguardfire.example", notes: null, is_active: true, created_at: today },
-  { id: "t-roofing", company_name: "TopLine Roofing", phone: "555-0108", email: "crew@toplineroofing.example", notes: null, is_active: true, created_at: today },
-  { id: "t-drywall", company_name: "ClearView Drywall", phone: "555-0109", email: "schedule@clearviewdrywall.example", notes: null, is_active: true, created_at: today },
-  { id: "t-landscaping", company_name: "GreenScape Landscaping", phone: "555-0110", email: "team@greenscape.example", notes: null, is_active: true, created_at: today },
-];
+const seedTrades: Trade[] = (
+  [
+    { id: "t-electrical", company_name: "Apex Electrical", phone: "555-0101", email: "dispatch@apexelectrical.example", notes: null, is_active: true, created_at: today },
+    { id: "t-plumbing", company_name: "Summit Plumbing", phone: "555-0102", email: "office@summitplumbing.example", notes: null, is_active: true, created_at: today },
+    { id: "t-hvac", company_name: "Coastal HVAC", phone: "555-0103", email: "info@coastalhvac.example", notes: null, is_active: true, created_at: today },
+    { id: "t-framing", company_name: "Ironclad Framing", phone: "555-0104", email: "jobs@ironcladframing.example", notes: null, is_active: true, created_at: today },
+    { id: "t-concrete", company_name: "Precision Concrete", phone: "555-0105", email: "scheduling@precisionconcrete.example", notes: null, is_active: true, created_at: today },
+    { id: "t-painting", company_name: "BrightCoat Painting", phone: "555-0106", email: "hello@brightcoat.example", notes: null, is_active: true, created_at: today },
+    { id: "t-fire", company_name: "SafeGuard Fire Suppression", phone: "555-0107", email: "ops@safeguardfire.example", notes: null, is_active: true, created_at: today },
+    { id: "t-roofing", company_name: "TopLine Roofing", phone: "555-0108", email: "crew@toplineroofing.example", notes: null, is_active: true, created_at: today },
+    { id: "t-drywall", company_name: "ClearView Drywall", phone: "555-0109", email: "schedule@clearviewdrywall.example", notes: null, is_active: true, created_at: today },
+    { id: "t-landscaping", company_name: "GreenScape Landscaping", phone: "555-0110", email: "team@greenscape.example", notes: null, is_active: true, created_at: today },
+  ] as Omit<Trade, "ics_feed_url" | "ics_synced_at">[]
+).map((trade) => ({ ...trade, ics_feed_url: null, ics_synced_at: null }));
+
 
 const seedCategoryLinks: { trade_id: string; category_id: string }[] = [
   { trade_id: "t-electrical", category_id: "cat-electrical" },
@@ -154,7 +164,7 @@ const seedBookings: Booking[] = seedBookingsWithoutConfirmation.map((booking) =>
 }));
 
 const seedExternalCommitments: ExternalCommitment[] = [
-  { id: "ec-concrete-1", trade_id: "t-concrete", crew_count: 2, start_date: d(2), end_date: d(6), note: "Other GC job (Westside Plaza)", created_at: today },
+  { id: "ec-concrete-1", trade_id: "t-concrete", crew_count: 2, start_date: d(2), end_date: d(6), note: "Other GC job (Westside Plaza)", created_at: today, source: "manual", external_uid: null },
 ];
 
 const seedCapacityOverrides: CapacityOverride[] = [];
@@ -168,6 +178,53 @@ const seedTradeCrewMembers: TradeCrewMember[] = [
 const seedBookingCrewMembers: BookingCrewMember[] = [
   { booking_id: "b-elec-1", crew_member_id: "member-elec-1", assigned_at: today },
   { booking_id: "b-elec-1", crew_member_id: "member-elec-2", assigned_at: today },
+];
+
+// One example in each direction so the notifications dropdown has something
+// to show right away when exploring the demo.
+const seedChangeRequests: BookingChangeRequest[] = [
+  {
+    id: "req-elec-2-reschedule",
+    booking_id: "b-elec-2",
+    trade_id: "t-electrical",
+    project_name: "Harbor View Office Tower",
+    trade_name: "Apex Electrical",
+    request_type: "reschedule",
+    status: "pending",
+    requested_by: PROFILE_PM_ID,
+    requested_by_name: "Paula Manager",
+    requested_by_role: "pm",
+    current_start_date: d(2),
+    current_end_date: d(4),
+    proposed_start_date: d(3),
+    proposed_end_date: d(6),
+    reason: "Site isn't ready until the extra concrete cures.",
+    created_at: today,
+    resolved_by: null,
+    resolved_at: null,
+    resolution_note: null,
+  },
+  {
+    id: "req-elec-3-cancel",
+    booking_id: "b-elec-3",
+    trade_id: "t-electrical",
+    project_name: "Lincoln Elementary Addition",
+    trade_name: "Apex Electrical",
+    request_type: "cancel",
+    status: "pending",
+    requested_by: "demo-trade",
+    requested_by_name: "Terry Volt (Apex Electrical)",
+    requested_by_role: "trade",
+    current_start_date: d(5),
+    current_end_date: d(8),
+    proposed_start_date: null,
+    proposed_end_date: null,
+    reason: "Crew got pulled onto an emergency job.",
+    created_at: today,
+    resolved_by: null,
+    resolved_at: null,
+    resolution_note: null,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -187,6 +244,8 @@ let externalCommitments = clone(seedExternalCommitments);
 let capacityOverrides = clone(seedCapacityOverrides);
 const tradeCrewMembers = clone(seedTradeCrewMembers);
 let bookingCrewMembers = clone(seedBookingCrewMembers);
+const changeRequests = clone(seedChangeRequests);
+let externalCommitmentCrewMembers: ExternalCommitmentCrewMember[] = [];
 
 function tradeWithDetails(trade: Trade): TradeWithDetails {
   return {
@@ -221,6 +280,10 @@ export function demoGetTradesWithDetails(): TradeWithDetails[] {
 export function demoGetTradeWithDetailsById(tradeId: string): TradeWithDetails | null {
   const trade = trades.find((t) => t.id === tradeId);
   return trade ? tradeWithDetails(trade) : null;
+}
+
+export function demoGetTradeIcsUrl(tradeId: string): string | null {
+  return trades.find((t) => t.id === tradeId)?.ics_feed_url ?? null;
 }
 
 export function demoGetProjects(): Project[] {
@@ -288,6 +351,12 @@ export function demoGetBookingsForTrade(tradeId: string): Booking[] {
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 }
 
+export function demoGetBookingsForProject(projectId: string): Booking[] {
+  return bookings
+    .filter((b) => b.project_id === projectId && b.status !== "cancelled")
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+}
+
 export function demoGetTradeCrewMembers(tradeId: string): TradeCrewMember[] {
   return tradeCrewMembers
     .filter((member) => member.trade_id === tradeId)
@@ -328,10 +397,37 @@ export function demoGetExternalCommitmentsForTrade(tradeId: string): ExternalCom
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 }
 
+export function demoGetExternalCommitmentCrewMembersForTrade(
+  tradeId: string,
+): ExternalCommitmentCrewMember[] {
+  const memberIds = new Set(
+    tradeCrewMembers.filter((member) => member.trade_id === tradeId).map((member) => member.id),
+  );
+  return externalCommitmentCrewMembers.filter((assignment) => memberIds.has(assignment.crew_member_id));
+}
+
+export function demoGetOrCreateCalendarExportToken(tradeId: string): string {
+  // Derived (not stored) so it still resolves even if the API route handler
+  // ends up with its own module instance of this in-memory store in dev.
+  return `demo-${tradeId}`;
+}
+
+export function demoGetTradeIdForExportToken(token: string): string | null {
+  if (!token.startsWith("demo-")) return null;
+  const tradeId = token.slice("demo-".length);
+  return trades.some((trade) => trade.id === tradeId) ? tradeId : null;
+}
+
 export function demoGetCapacityOverridesForTrade(tradeId: string): CapacityOverride[] {
   return capacityOverrides
     .filter((override) => override.trade_id === tradeId)
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
+}
+
+export function demoGetPendingChangeRequests(): BookingChangeRequest[] {
+  return changeRequests
+    .filter((request) => request.status === "pending")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 // ---------------------------------------------------------------------------
@@ -656,6 +752,155 @@ export async function demoUpdateBookingEndDate(input: {
   return { ok: true };
 }
 
+export type ChangeRequestResult = { ok: true } | { ok: false; error: string };
+
+export async function demoRequestBookingChange(input: {
+  bookingId: string;
+  requestType: BookingRequestType;
+  proposedStartDate?: string;
+  proposedEndDate?: string;
+  reason?: string;
+  requestedBy: string;
+  requestedByName: string;
+  requestedByRole: UserRole;
+  requesterTradeId: string | null;
+}): Promise<ChangeRequestResult> {
+  const booking = bookings.find((b) => b.id === input.bookingId);
+  if (!booking) return { ok: false, error: "Booking not found." };
+  if (booking.status !== "confirmed") {
+    return { ok: false, error: "Only confirmed bookings can have a change request." };
+  }
+
+  const isStaff = ["admin", "pm", "site_supervisor"].includes(input.requestedByRole);
+  if (!isStaff && booking.trade_id !== input.requesterTradeId) {
+    return { ok: false, error: "You can only request changes for your own trade's bookings." };
+  }
+
+  if (changeRequests.some((r) => r.booking_id === input.bookingId && r.status === "pending")) {
+    return { ok: false, error: "There's already a pending request for this booking." };
+  }
+
+  if (
+    input.requestType === "reschedule" &&
+    input.proposedStartDate === booking.start_date &&
+    input.proposedEndDate === booking.end_date
+  ) {
+    return { ok: false, error: "Proposed dates match the current booking dates." };
+  }
+
+  const trade = trades.find((t) => t.id === booking.trade_id);
+  const project = projects.find((p) => p.id === booking.project_id);
+  const tradeName = trade?.company_name ?? "Trade";
+  const projectName = project?.name ?? "Unknown project";
+
+  changeRequests.push({
+    id: uid("req"),
+    booking_id: booking.id,
+    trade_id: booking.trade_id,
+    project_name: projectName,
+    trade_name: tradeName,
+    request_type: input.requestType,
+    status: "pending",
+    requested_by: input.requestedBy,
+    requested_by_name: input.requestedByName,
+    requested_by_role: input.requestedByRole,
+    current_start_date: booking.start_date,
+    current_end_date: booking.end_date,
+    proposed_start_date: input.requestType === "reschedule" ? input.proposedStartDate ?? null : null,
+    proposed_end_date: input.requestType === "reschedule" ? input.proposedEndDate ?? null : null,
+    reason: input.reason || null,
+    created_at: new Date().toISOString(),
+    resolved_by: null,
+    resolved_at: null,
+    resolution_note: null,
+  });
+
+  const emailPayload = {
+    requestedByName: input.requestedByName,
+    projectName,
+    requestType: input.requestType,
+    currentStart: booking.start_date,
+    currentEnd: booking.end_date,
+    proposedStart: input.proposedStartDate ?? null,
+    proposedEnd: input.proposedEndDate ?? null,
+    reason: input.reason ?? null,
+  };
+
+  if (isStaff) {
+    if (trade?.email) {
+      await sendChangeRequestEmail({ to: trade.email, recipientName: tradeName, ...emailPayload });
+    }
+  } else {
+    const creator = booking.created_by ? profiles.find((p) => p.id === booking.created_by) : undefined;
+    if (creator?.email) {
+      await sendChangeRequestEmail({
+        to: creator.email,
+        recipientName: creator.full_name || "there",
+        ...emailPayload,
+      });
+    }
+  }
+
+  return { ok: true };
+}
+
+export async function demoRespondToChangeRequest(input: {
+  requestId: string;
+  decision: "approved" | "rejected";
+  note?: string;
+  responderId: string;
+  responderName: string;
+  responderRole: UserRole;
+  responderTradeId: string | null;
+}): Promise<ChangeRequestResult> {
+  const request = changeRequests.find((r) => r.id === input.requestId);
+  if (!request) return { ok: false, error: "Request not found." };
+  if (request.status !== "pending") {
+    return { ok: false, error: "This request has already been resolved." };
+  }
+
+  const isStaff = ["admin", "pm", "site_supervisor"].includes(input.responderRole);
+  const canRespond =
+    request.requested_by_role === "trade"
+      ? isStaff
+      : input.responderRole === "trade" && input.responderTradeId === request.trade_id;
+  if (!canRespond) {
+    return { ok: false, error: "You aren't able to respond to this request." };
+  }
+
+  request.status = input.decision;
+  request.resolved_by = input.responderId;
+  request.resolved_at = new Date().toISOString();
+  request.resolution_note = input.note || null;
+
+  if (input.decision === "approved") {
+    const booking = bookings.find((b) => b.id === request.booking_id);
+    if (booking) {
+      if (request.request_type === "cancel") {
+        booking.status = "cancelled";
+      } else if (request.proposed_start_date && request.proposed_end_date) {
+        booking.start_date = request.proposed_start_date;
+        booking.end_date = request.proposed_end_date;
+      }
+    }
+  }
+
+  const requester = profiles.find((p) => p.id === request.requested_by);
+  if (requester?.email) {
+    await sendChangeRequestDecisionEmail({
+      to: requester.email,
+      recipientName: requester.full_name || "there",
+      projectName: request.project_name,
+      requestType: request.request_type,
+      decision: input.decision,
+      respondedByName: input.responderName,
+      note: input.note ?? null,
+    });
+  }
+
+  return { ok: true };
+}
+
 export function demoAddCrew(tradeId: string, name: string): DemoActionResult {
   crews.push({ id: uid("crew"), trade_id: tradeId, name, is_active: true, created_at: toDateKey(new Date()) });
   return { ok: true };
@@ -683,12 +928,104 @@ export function demoAddExternalCommitment(input: {
     end_date: input.endDate,
     note: input.note || null,
     created_at: toDateKey(new Date()),
+    source: "manual",
+    external_uid: null,
   });
   return { ok: true };
 }
 
 export function demoRemoveExternalCommitment(commitmentId: string): DemoActionResult {
   externalCommitments = externalCommitments.filter((e) => e.id !== commitmentId);
+  return { ok: true };
+}
+
+export function demoAddExternalJob(input: {
+  tradeId: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  crewMemberIds: string[];
+}): DemoActionResult {
+  const membersBelongToTrade = input.crewMemberIds.every((memberId) =>
+    tradeCrewMembers.some((member) => member.id === memberId && member.trade_id === input.tradeId),
+  );
+  if (!membersBelongToTrade) {
+    return { ok: false, error: "One or more crew members could not be found." };
+  }
+
+  const id = uid("ext");
+  externalCommitments.push({
+    id,
+    trade_id: input.tradeId,
+    crew_count: Math.max(1, input.crewMemberIds.length),
+    start_date: input.startDate,
+    end_date: input.endDate,
+    note: input.title,
+    created_at: new Date().toISOString(),
+    source: "manual",
+    external_uid: null,
+  });
+  externalCommitmentCrewMembers.push(
+    ...input.crewMemberIds.map((crewMemberId) => ({
+      external_commitment_id: id,
+      crew_member_id: crewMemberId,
+      assigned_at: new Date().toISOString(),
+    })),
+  );
+  return { ok: true };
+}
+
+export function demoRemoveExternalJob(commitmentId: string, tradeId: string): DemoActionResult {
+  const commitment = externalCommitments.find(
+    (item) => item.id === commitmentId && item.trade_id === tradeId,
+  );
+  if (!commitment) return { ok: false, error: "Job not found." };
+  externalCommitments = externalCommitments.filter((item) => item.id !== commitmentId);
+  externalCommitmentCrewMembers = externalCommitmentCrewMembers.filter(
+    (assignment) => assignment.external_commitment_id !== commitmentId,
+  );
+  return { ok: true };
+}
+
+export function demoApplyCalendarSync(input: {
+  tradeId: string;
+  url: string;
+  ranges: { uid: string; summary: string; startDate: string; endDate: string }[];
+}): DemoActionResult {
+  const trade = trades.find((t) => t.id === input.tradeId);
+  if (!trade) return { ok: false, error: "Trade not found." };
+
+  externalCommitments = externalCommitments.filter(
+    (e) => !(e.trade_id === input.tradeId && e.source === "calendar_sync"),
+  );
+  externalCommitments.push(
+    ...input.ranges.map((range) => ({
+      id: uid("ext"),
+      trade_id: input.tradeId,
+      crew_count: 1,
+      start_date: range.startDate,
+      end_date: range.endDate,
+      note: range.summary,
+      created_at: new Date().toISOString(),
+      source: "calendar_sync" as const,
+      external_uid: range.uid,
+    })),
+  );
+
+  trade.ics_feed_url = input.url;
+  trade.ics_synced_at = new Date().toISOString();
+  return { ok: true };
+}
+
+export function demoDisconnectCalendarSync(tradeId: string): DemoActionResult {
+  const trade = trades.find((t) => t.id === tradeId);
+  if (!trade) return { ok: false, error: "Trade not found." };
+
+  externalCommitments = externalCommitments.filter(
+    (e) => !(e.trade_id === tradeId && e.source === "calendar_sync"),
+  );
+  trade.ics_feed_url = null;
+  trade.ics_synced_at = null;
   return { ok: true };
 }
 
@@ -797,6 +1134,8 @@ export function demoCreateTrade(input: {
     notes: null,
     is_active: true,
     created_at: toDateKey(new Date()),
+    ics_feed_url: null,
+    ics_synced_at: null,
   });
   for (const categoryId of input.categoryIds) {
     categoryLinks.push({ trade_id: id, category_id: categoryId });
